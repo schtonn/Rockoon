@@ -10,6 +10,7 @@ mod keys;
 mod l10n;
 mod media;
 mod preferences;
+mod process_guard;
 mod profiles;
 mod sky;
 mod style;
@@ -35,7 +36,9 @@ fn main() -> iced::Result {
         })
         .theme(style::theme())
         .subscription(app::App::subscription)
-        .default_font(iced::Font::with_name("Microsoft YaHei UI"))
+        .font(include_bytes!("../resources/fonts/SourceHanSansCN-Regular.otf").as_slice())
+        .font(include_bytes!("../resources/fonts/SourceHanSansCN-Medium.otf").as_slice())
+        .default_font(iced::Font::with_name("Source Han Sans CN"))
         .window(iced::window::Settings {
             size: if std::env::args().any(|a| a == "--tas-editor") {
                 iced::Size::new(1280.0, 960.0)

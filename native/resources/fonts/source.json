@@ -1,0 +1,25 @@
+{
+  "repository": "https://github.com/adobe-fonts/source-han-sans",
+  "tag": "2.005R",
+  "commit": "6c709ca72d3d7c46ab42ebecc1a26e7d69595a37",
+  "files": [
+    {
+      "file": "SourceHanSansCN-Regular.otf",
+      "bytes": 8429224,
+      "sha256": "e2bc8a2e7f37474b774fff8db758681ece40bb6947a90d571bce9dd60671a8e4",
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/6c709ca72d3d7c46ab42ebecc1a26e7d69595a37/SubsetOTF/CN/SourceHanSansCN-Regular.otf"
+    },
+    {
+      "file": "SourceHanSansCN-Medium.otf",
+      "bytes": 8406556,
+      "sha256": "a94e558a2fe972bee4f46bce0843abff37063fd68c33f1e7d9058f6f09432b01",
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/6c709ca72d3d7c46ab42ebecc1a26e7d69595a37/SubsetOTF/CN/SourceHanSansCN-Medium.otf"
+    },
+    {
+      "file": "LICENSE.txt",
+      "bytes": 4463,
+      "sha256": "fcac737e761ec63dbfbdce11030a1780161920d80315edba9c8beff1c2bac5a2",
+      "url": "https://raw.githubusercontent.com/adobe-fonts/source-han-sans/6c709ca72d3d7c46ab42ebecc1a26e7d69595a37/LICENSE.txt"
+    }
+  ]
+}

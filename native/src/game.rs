@@ -114,8 +114,8 @@ pub fn launch(
     map: Option<&Path>,
     prefs: &crate::preferences::Preferences,
 ) -> Result<RunningGame, String> {
-    if player_running()? {
-        return Err("Ballance 已在运行，请先退出游戏".to_owned());
+    if player_running(&instance.root)? {
+        return Err("当前目录的 Ballance 已在运行，请先退出该游戏".to_owned());
     }
     if map.is_some() {
         crate::jobs::ensure_io(&instance.root)?;
@@ -198,8 +198,8 @@ fn launch_command(instance: &Instance, map: Option<&Path>) -> Result<Command, St
 }
 
 pub fn toggle_mod(instance: &Instance, resource: &Resource) -> Result<(), String> {
-    if player_running()? {
-        return Err("请先退出游戏，再更改模组".to_owned());
+    if player_running(&instance.root)? {
+        return Err("当前游戏目录正在使用，请先退出该目录的游戏再更改模组".to_owned());
     }
     rename_mod(instance, resource)
 }
@@ -249,49 +249,8 @@ pub fn open_folder(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(windows)]
-pub fn player_running() -> Result<bool, String> {
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
-        System::Diagnostics::ToolHelp::{
-            CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
-            TH32CS_SNAPPROCESS,
-        },
-    };
-    // The snapshot handle is closed on every path. Process entries own their UTF-16 buffer.
-    unsafe {
-        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if snapshot == INVALID_HANDLE_VALUE {
-            return Err(format!(
-                "无法检查游戏进程：{}",
-                std::io::Error::last_os_error()
-            ));
-        }
-        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        let mut found = false;
-        let mut valid = Process32FirstW(snapshot, &mut entry);
-        if valid == 0 {
-            let failure = std::io::Error::last_os_error();
-            CloseHandle(snapshot);
-            return Err(format!("无法检查游戏进程：{failure}"));
-        }
-        while valid != 0 {
-            let end = entry
-                .szExeFile
-                .iter()
-                .position(|&unit| unit == 0)
-                .unwrap_or(entry.szExeFile.len());
-            if String::from_utf16_lossy(&entry.szExeFile[..end]).eq_ignore_ascii_case("Player.exe")
-            {
-                found = true;
-                break;
-            }
-            valid = Process32NextW(snapshot, &mut entry);
-        }
-        CloseHandle(snapshot);
-        Ok(found)
-    }
+pub fn player_running(root: &Path) -> Result<bool, String> {
+    crate::process_guard::running(root)
 }
 
 pub fn launch_tas(
@@ -299,8 +258,8 @@ pub fn launch_tas(
     prefs: &crate::preferences::Preferences,
     fps: f32,
 ) -> Result<RunningGame, String> {
-    if player_running()? {
-        return Err("Ballance 已在运行，请先退出游戏".into());
+    if player_running(&instance.root)? {
+        return Err("当前目录的 Ballance 已在运行，请先退出该游戏".into());
     }
     #[cfg(windows)]
     {
@@ -321,13 +280,6 @@ pub fn launch_tas(
         let _ = (instance, prefs, fps);
         Err("TAS 回放仅支持 Windows".into())
     }
-}
-
-#[cfg(not(windows))]
-pub fn player_running() -> Result<bool, String> {
-    rockoon_platform::process::find_processes("Player.exe".into())
-        .map(|p| !p.is_empty())
-        .map_err(error)
 }
 
 #[cfg(test)]

@@ -377,6 +377,15 @@ impl App {
             || self.running.is_some()
             || self.jobs.iter().any(|j| !j.progress().done)
     }
+    fn lock_reason(&self) -> &'static str {
+        if self.running.is_some() {
+            "当前目录的游戏正在运行，请先退出该游戏"
+        } else if self.launching {
+            "当前目录的游戏正在启动，请稍候"
+        } else {
+            "请等待当前操作完成后重试"
+        }
+    }
     fn error(&mut self, message: impl Into<String>) {
         self.notice = Some(message.into());
     }
@@ -464,7 +473,7 @@ impl App {
         work: impl FnOnce() -> Result<String, String> + Send + 'static,
     ) -> Task<Message> {
         if self.locked() {
-            self.error("请等待当前操作完成，并退出游戏后重试");
+            self.error(self.lock_reason());
             return Task::none();
         }
         self.mutating = true;
@@ -480,7 +489,7 @@ impl App {
             return Task::none();
         }
         if self.locked() {
-            self.error("请先完成当前操作或退出游戏");
+            self.error(self.lock_reason());
             return Task::none();
         }
         let job = Job::new(request);
@@ -930,7 +939,7 @@ impl App {
                                 .join(path.file_name().unwrap_or_default());
                             self.deleted = Some((path.clone(), saved.clone()));
                             return self.change(move || {
-                                workspace::idle()?;
+                                workspace::idle(&root)?;
                                 workspace::checked(&root, &path)?;
                                 workspace::checked(&root, &saved)?;
                                 std::fs::create_dir_all(saved.parent().ok_or("无效路径")?)
@@ -1331,7 +1340,7 @@ impl App {
                     let requested = map.clone();
                     return Task::perform(
                         background(move || {
-                            workspace::idle()?;
+                            workspace::idle(&root)?;
                             tas::restore(&root)?;
                             let mut diff = vanilla::verify(&root)?;
                             if let Some(project) = tas::autoplay(&root)? {

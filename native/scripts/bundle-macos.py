@@ -14,6 +14,7 @@ binary_dir = app / "Contents/MacOS"
 resources = app / "Contents/Resources"
 binary_dir.mkdir(parents=True, exist_ok=True)
 resources.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(repo / "native/resources/fonts/LICENSE.txt", resources / "SourceHanSans-LICENSE.txt")
 subprocess.run([
     "lipo", "-create",
     str(repo / "native/target/aarch64-apple-darwin/release/rockoon-native"),

@@ -27,7 +27,7 @@ pub fn verify(root: &Path) -> Result<Vec<String>, String> {
     Ok(diff)
 }
 pub fn restore(root: &Path) -> Result<String, String> {
-    workspace::idle()?;
+    workspace::idle(root)?;
     let wanted = entries()?;
     let mut changes = Vec::new();
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(include_bytes!(

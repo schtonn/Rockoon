@@ -181,7 +181,7 @@ pub enum Action {
     Switch(String),
 }
 pub fn change(root: &Path, action: Action) -> Result<Value, String> {
-    workspace::idle()?;
+    workspace::idle(root)?;
     change_inner(root, action)
 }
 fn change_inner(root: &Path, action: Action) -> Result<Value, String> {

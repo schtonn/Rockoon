@@ -12,6 +12,9 @@ Rust + Iced 0.14，使用 tiny-skia 软件渲染。运行不依赖 Tauri、WebVi
 - TAS 在独立原生窗口中打开，通过启动器设置启用入口。
 - 没有辅助灰色小字、宣传卡片或重绘的游戏插画。
 
+正文内嵌思源黑体 CN Regular，导航使用 Medium（15px）；无需在系统中安装字体。
+字体来自 Adobe Source Han Sans 2.005R，原始字体、OFL 许可证和来源哈希见 native/resources/fonts/。
+
 ## 已接入的功能
 
 | 功能 | 原生实现 |
@@ -48,7 +51,7 @@ cargo run --manifest-path native/Cargo.toml
 cargo build --release --manifest-path native/Cargo.toml
 ~~~
 
-输出为 native/target/release/rockoon-native.exe，可以单独复制使用。
+输出为 native/target/release/rockoon-native.exe，复制使用时请同时保留随包的 Rockoon-SourceHanSans-LICENSE.txt。
 命令行可传入游戏根目录，不改写已保存的目录选择：
 
 ~~~powershell
@@ -94,7 +97,8 @@ native/platform 的构建脚本仅适配原有 Win32/Wine 命令的宏、句柄�
 
 ## 写入与兼容边界
 
-- 修改游戏文件前检查 Player.exe；结束游戏只针对本窗口持有的进程。
+- 修改游戏文件前按 Player.exe 的实际路径检查所选目录；其他目录的进程不阻拦，同目录的外部进程仍保护文件。结束游戏只针对本窗口持有的进程。
+- Windows 无法读取进程路径时会说明无法确认目录，不把未知进程直接认作当前游戏；Wine 重建涉及共享环境，仍要求退出游戏。
 - 文件替换先保留 .rockoon/backups 备份；批量写入失败会回退。删除使用 .rockoon/trash，可撤销本次删除。
 - 拒绝路径越界、符号链接/目录联接、压缩包重复路径和超出限制的解压内容。
 - TDB 修改保留其他表、未编辑选项和最新进度；配置文件如被其他操作修改，会拒绝覆盖并要求重新读取。

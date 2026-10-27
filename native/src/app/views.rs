@@ -220,12 +220,19 @@ impl App {
         base
     }
     fn nav(&self, page: Page) -> Element<'_, Message> {
-        button(text(crate::l10n::text(page.label())).size(14))
-            .on_press(Message::Page(page))
-            .width(Fill)
-            .padding([10, 14])
-            .style(style::nav(self.page == page))
-            .into()
+        button(
+            text(crate::l10n::text(page.label()))
+                .size(15)
+                .font(iced::Font {
+                    weight: iced::font::Weight::Medium,
+                    ..iced::Font::with_name("Source Han Sans CN")
+                }),
+        )
+        .on_press(Message::Page(page))
+        .width(Fill)
+        .padding([10, 14])
+        .style(style::nav(self.page == page))
+        .into()
     }
     fn header(&self) -> Element<'_, Message> {
         let full = self

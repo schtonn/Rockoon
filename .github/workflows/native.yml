@@ -34,6 +34,7 @@ jobs:
       - shell: pwsh
         run: |
           Copy-Item native/target/release/rockoon-native.exe Rockoon-native-windows-x64.exe
+          Copy-Item native/resources/fonts/LICENSE.txt Rockoon-SourceHanSans-LICENSE.txt
           (Get-FileHash Rockoon-native-windows-x64.exe -Algorithm SHA256).Hash.ToLower() | Out-File -Encoding ascii Rockoon-native-windows-x64.exe.sha256
       - uses: actions/upload-artifact@v4
         with:
@@ -41,6 +42,7 @@ jobs:
           path: |
             Rockoon-native-windows-x64.exe
             Rockoon-native-windows-x64.exe.sha256
+            Rockoon-SourceHanSans-LICENSE.txt
 
   macos:
     runs-on: macos-latest

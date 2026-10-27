@@ -272,7 +272,7 @@ pub fn restore(root: &Path) -> Result<(), String> {
     if !pending.is_file() {
         return Ok(());
     }
-    workspace::idle()?;
+    workspace::idle(root)?;
     let changes: Vec<CfgChange> =
         serde_json::from_slice(&fs::read(&pending).map_err(error)?).map_err(error)?;
     let path = root.join("ModLoader/Configs/BallanceTAS.cfg");
@@ -281,7 +281,7 @@ pub fn restore(root: &Path) -> Result<(), String> {
     fs::remove_file(pending).map_err(error)
 }
 pub fn prepare(root: &Path, project: &Project, level: u8, skip: usize) -> Result<(), String> {
-    workspace::idle()?;
+    workspace::idle(root)?;
     restore(root)?;
     if !(1..=13).contains(&level) {
         return Err("TAS 关卡需要 1–13".into());
@@ -342,7 +342,7 @@ pub fn prepare(root: &Path, project: &Project, level: u8, skip: usize) -> Result
     )
 }
 pub fn disable_autoplay(root: &Path) -> Result<(), String> {
-    workspace::idle()?;
+    workspace::idle(root)?;
     let path = root.join("ModLoader/Configs/BallanceTAS.cfg");
     let text = fs::read_to_string(&path).map_err(error)?;
     workspace::replace(

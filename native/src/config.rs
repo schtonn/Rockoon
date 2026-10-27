@@ -298,7 +298,7 @@ impl Document {
         Ok(value)
     }
     pub fn save(&self, root: &Path) -> Result<(), String> {
-        workspace::idle()?;
+        workspace::idle(root)?;
         match &self.source {
             Source::Options | Source::Data => {
                 let edited = self.value()?;

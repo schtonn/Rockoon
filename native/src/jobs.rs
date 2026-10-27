@@ -313,7 +313,7 @@ impl Job {
         let file = self.download(&format!("{}{path}", origin()))?;
         self.check()?;
         self.phase("安装");
-        workspace::idle()?;
+        workspace::idle(root)?;
         if let Ok(mut s) = self.state.lock() {
             s.cancellable = false;
         }
@@ -391,7 +391,12 @@ impl Job {
             }
             #[cfg(not(windows))]
             Request::Wine { .. } => {
-                workspace::idle()?;
+                if !rockoon_platform::process::find_processes("Player.exe".into())
+                    .map_err(error)?
+                    .is_empty()
+                {
+                    return Err("请先退出使用共享 Wine 环境的游戏，再重建 Wine 环境".into());
+                }
                 if let Ok(mut state) = self.state.lock() {
                     state.cancellable = false;
                 }
@@ -412,7 +417,7 @@ impl Job {
                 bmlplus,
                 token,
             } => {
-                workspace::idle()?;
+                workspace::idle(root)?;
                 let marker = root.join(".rockoon/native-install.json");
                 let previous: Option<Value> = fs::read(&marker)
                     .ok()
@@ -481,7 +486,7 @@ impl Job {
                 patch,
                 version,
             } => {
-                workspace::idle()?;
+                workspace::idle(root)?;
                 if patch.key == "bmlplus"
                     && fs::metadata(root.join("Bin/Player.exe"))
                         .map_err(error)?
@@ -533,7 +538,7 @@ pub fn ensure_io(root: &Path) -> Result<(), String> {
     }
     let path = root.join("ModLoader/Mods/RockoonIO.bmodp");
     if !path.exists() && !path.with_file_name("RockoonIO.bmodp.disable").exists() {
-        workspace::idle()?;
+        workspace::idle(root)?;
         workspace::replace(
             root,
             &[(

@@ -8,9 +8,9 @@ use std::{
 pub fn error(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
-pub fn idle() -> Result<(), String> {
-    if crate::game::player_running()? {
-        Err("请先退出游戏，再修改文件或配置".into())
+pub fn idle(root: &Path) -> Result<(), String> {
+    if crate::game::player_running(root)? {
+        Err("当前游戏目录正在使用，请先退出该目录的游戏再修改文件或配置".into())
     } else {
         Ok(())
     }
@@ -190,14 +190,14 @@ pub fn matches(name: &str, query: &str) -> bool {
         .all(|q| stem.contains(&q.to_lowercase()))
 }
 pub fn folder(root: &Path, dir: &Path, name: &str) -> Result<(), String> {
-    idle()?;
+    idle(root)?;
     if name.trim().is_empty() || name.contains(['/', '\\', ':']) || name == "." || name == ".." {
         return Err("请输入有效文件夹名".into());
     }
     fs::create_dir(checked(root, &dir.join(name.trim()))?).map_err(error)
 }
 pub fn relocate(root: &Path, source: &Path, target: &Path) -> Result<(), String> {
-    idle()?;
+    idle(root)?;
     let source = checked(root, source)?;
     let target = checked(root, target)?;
     if target.exists() {
@@ -209,7 +209,7 @@ pub fn relocate(root: &Path, source: &Path, target: &Path) -> Result<(), String>
     fs::rename(source, target).map_err(error)
 }
 pub fn trash(root: &Path, path: &Path) -> Result<PathBuf, String> {
-    idle()?;
+    idle(root)?;
     let path = checked(root, path)?;
     let saved = checked(
         root,
@@ -223,7 +223,7 @@ pub fn trash(root: &Path, path: &Path) -> Result<PathBuf, String> {
     Ok(saved)
 }
 pub fn import_files(root: &Path, dir: &Path, kind: Kind, paths: &[PathBuf]) -> Result<(), String> {
-    idle()?;
+    idle(root)?;
     let mut changes = Vec::new();
     for path in paths {
         let name = path.file_name().ok_or("无效文件名")?;
@@ -293,7 +293,7 @@ pub fn archive_entries(path: &Path, strip: bool) -> Result<Vec<(PathBuf, Vec<u8>
     Ok(result)
 }
 pub fn brp(root: &Path, archive: &Path, sky: &str) -> Result<String, String> {
-    idle()?;
+    idle(root)?;
     let info = rockoon_core::brp::validate_brp(archive, root).map_err(error)?;
     archive_entries(archive, false)?;
     let staging = tempfile::tempdir().map_err(error)?;
