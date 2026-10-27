@@ -1,5 +1,5 @@
 use iced::widget::image;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 /// All artwork comes from the selected installation. No replacement drawings are embedded.
 #[derive(Clone, Debug, Default)]
@@ -7,14 +7,14 @@ pub struct GameAssets {
     pub sky: Option<image::Handle>,
     pub selected_button: Option<image::Handle>,
     pub normal_button: Option<image::Handle>,
-    pub start: Option<image::Handle>,
+    pub captions: HashMap<&'static str, Caption>,
 }
 
 impl GameAssets {
     pub fn load(root: &Path) -> Self {
         let textures = root.join("Textures");
         Self {
-            start: start_caption(&textures.join("Font_1.tga")),
+            captions: captions(&textures.join("Font_1.tga")),
             sky: decode(&textures.join("Sky/Sky_A_Front.bmp"), None),
             selected_button: decode(&textures.join("Button01_select.tga"), Some((256, 256))),
             normal_button: decode(&textures.join("Button01_deselect.tga"), Some((256, 256))),
@@ -34,19 +34,35 @@ impl GameAssets {
     }
 }
 
-/// The game's bitmap font is a 16 by 16 ASCII atlas with 32px cells.
-/// Trim transparent side bearings and keep each glyph's original pixels and baseline.
-fn start_caption(path: &Path) -> Option<image::Handle> {
-    let atlas = bitmap::ImageReader::open(path)
-        .ok()?
-        .decode()
-        .ok()?
-        .into_rgba8();
+#[derive(Clone, Debug)]
+pub struct Caption {
+    pub handle: image::Handle,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Original menu labels use initial caps with the atlas's smaller capital-shaped lowercase glyphs.
+fn captions(path: &Path) -> HashMap<&'static str, Caption> {
+    let Some(atlas) = bitmap::ImageReader::open(path)
+        .ok()
+        .and_then(|reader| reader.decode().ok())
+        .map(|image| image.into_rgba8())
+    else {
+        return HashMap::new();
+    };
     if atlas.dimensions() != (512, 512) {
-        return None;
+        return HashMap::new();
     }
+    ["Start", "Stop", "Starting...", "Browse"]
+        .into_iter()
+        .filter_map(|label| bitmap_caption(&atlas, label).map(|caption| (label, caption)))
+        .collect()
+}
+
+/// Keep the font's source strokes, alpha and shared baseline, trimming transparent side bearings.
+fn bitmap_caption(atlas: &bitmap::RgbaImage, label: &str) -> Option<Caption> {
     let mut glyphs = Vec::new();
-    for code in b"START" {
+    for code in label.bytes() {
         let x = u32::from(code % 16) * 32;
         let y = u32::from(code / 16) * 32;
         let columns: Vec<_> = (0..32)
@@ -54,9 +70,10 @@ fn start_caption(path: &Path) -> Option<image::Handle> {
             .collect();
         let left = *columns.first()?;
         let right = *columns.last()? + 1;
-        glyphs.push(bitmap::imageops::crop_imm(&atlas, x + left, y, right - left, 32).to_image());
+        glyphs.push(bitmap::imageops::crop_imm(atlas, x + left, y, right - left, 32).to_image());
     }
-    let width = glyphs.iter().map(bitmap::RgbaImage::width).sum::<u32>() + 8;
+    let width = glyphs.iter().map(bitmap::RgbaImage::width).sum::<u32>()
+        + 2 * glyphs.len().saturating_sub(1) as u32;
     let mut caption = bitmap::RgbaImage::new(width, 32);
     let mut x = 0;
     for glyph in glyphs {
@@ -69,7 +86,11 @@ fn start_caption(path: &Path) -> Option<image::Handle> {
     let top = *rows.first()?;
     let height = *rows.last()? + 1 - top;
     let pixels = bitmap::imageops::crop_imm(&caption, 0, top, width, height).to_image();
-    Some(image::Handle::from_rgba(width, height, pixels.into_raw()))
+    Some(Caption {
+        handle: image::Handle::from_rgba(width, height, pixels.into_raw()),
+        width,
+        height,
+    })
 }
 
 /// Keep source pixels unchanged, extracting the button's exact atlas rectangle before upload.

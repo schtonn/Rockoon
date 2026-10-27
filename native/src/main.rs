@@ -36,7 +36,7 @@ fn main() -> iced::Result {
         } else {
             "Rockoon"
         })
-        .theme(style::theme())
+        .theme(app::App::theme)
         .subscription(app::App::subscription)
         .font(include_bytes!("../resources/fonts/SourceHanSansCN-Regular.otf").as_slice())
         .font(include_bytes!("../resources/fonts/SourceHanSansCN-Medium.otf").as_slice())

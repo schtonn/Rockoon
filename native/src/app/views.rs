@@ -61,6 +61,7 @@ fn menu_panel<'a>(
 }
 impl App {
     pub fn view(&self) -> Element<'_, Message> {
+        let colors = style::colors(&self.theme());
         let mut nav = column![].spacing(6);
         for page in [Page::Home, Page::Maps, Page::Config, Page::Tasks] {
             nav = nav.push(self.nav(page));
@@ -116,9 +117,9 @@ impl App {
                     row![
                         text(&notice.text)
                             .size(14)
-                            .color(style::INK.scale_alpha(alpha))
+                            .color(colors.text.scale_alpha(alpha))
                             .width(Fill),
-                        button(text("×").size(18).color(style::INK.scale_alpha(alpha)))
+                        button(text("×").size(18).color(colors.text.scale_alpha(alpha)))
                             .padding([2, 7])
                             .style(style::quiet)
                             .on_press(Message::Dismiss)
@@ -128,7 +129,7 @@ impl App {
                 )
                 .padding(14)
                 .width(440)
-                .style(move |_| style::toast(alpha)),
+                .style(move |theme| style::toast(theme, alpha)),
             );
             stack![
                 base,
@@ -345,10 +346,20 @@ impl App {
         } else {
             full
         };
-        let trigger = button(iced::widget::canvas(FolderIcon).width(22).height(20))
-            .padding([7, 9])
-            .style(style::quiet)
-            .on_press(Message::FolderMenu);
+        let trigger = button(
+            iced::widget::canvas(FolderIcon {
+                on_sky: self.page == Page::Home,
+            })
+            .width(22)
+            .height(20),
+        )
+        .padding([7, 9])
+        .style(if self.page == Page::Home {
+            style::sky_button
+        } else {
+            style::quiet
+        })
+        .on_press(Message::FolderMenu);
         let panel = if self.folder_menu {
             let mut menu = column![].spacing(3).width(156);
             if let Some(root) = self.root() {
@@ -364,9 +375,16 @@ impl App {
             None
         };
         let folder = crate::popup::menu(trigger, panel, false);
-        let actions = row![folder, text(path).size(14)]
-            .spacing(8)
-            .align_y(Alignment::Center);
+        let actions = row![
+            folder,
+            text(path).size(14).color(if self.page == Page::Home {
+                iced::Color::WHITE
+            } else {
+                style::colors(&self.theme()).text
+            })
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
         let mut header = row![].align_y(Alignment::Center);
         if self.page != Page::Home {
             header = header.push(text(crate::l10n::text(self.page.section_label())).size(22));
@@ -377,13 +395,13 @@ impl App {
         let enabled =
             !self.busy && !self.launching && !self.jobs.iter().any(|j| !j.progress().done);
         let (label, message) = if self.launching {
-            ("正在启动…", Message::Launch(None))
+            ("Starting...", Message::Launch(None))
         } else if self.running.is_some() {
-            ("结束游戏", Message::Stop)
+            ("Stop", Message::Stop)
         } else if self.instance.is_some() {
-            ("START", Message::Launch(None))
+            ("Start", Message::Launch(None))
         } else {
-            ("选择游戏目录", Message::PickFolder)
+            ("Browse", Message::PickFolder)
         };
         let action: Element<'_, Message> = if let Some(visuals) = self
             .instance
@@ -391,42 +409,16 @@ impl App {
             .map(|i| &i.visuals)
             .filter(|v| v.launch_button(false).is_some())
         {
-            let opacity = if enabled { 1.0 } else { 0.5 };
-            let caption: Element<'_, Message> = if label == "START" {
-                if let Some(start) = &visuals.start {
-                    image(start.clone())
-                        .width(132)
-                        .height(20)
-                        .opacity(opacity)
-                        .into()
-                } else {
-                    text("START")
-                        .size(20)
-                        .color(iced::Color::WHITE.scale_alpha(opacity))
-                        .into()
-                }
-            } else {
-                text(crate::l10n::text(label))
-                    .size(16)
-                    .color(iced::Color::WHITE.scale_alpha(opacity))
-                    .into()
-            };
-            let caption = container(caption)
-                .padding(iced::Padding {
-                    left: 42.0,
-                    ..iced::Padding::ZERO
-                })
-                .center_x(Fill)
-                .center_y(Fill);
+            let caption = crate::launch::caption(visuals, label, enabled);
             crate::launch::button(
                 visuals.launch_button(false).unwrap().clone(),
                 visuals.launch_button(true).unwrap().clone(),
-                caption.into(),
+                caption,
                 enabled,
                 message,
             )
         } else {
-            button(text(crate::l10n::text(label)).size(15))
+            button(text(label.to_uppercase()).size(13))
                 .padding([14, 28])
                 .style(style::primary)
                 .on_press_maybe(enabled.then_some(message))
@@ -990,6 +982,15 @@ impl App {
         let prefs = &self.preferences;
         let mut content = column![
             row![
+                text(crate::l10n::text("外观")).size(14).width(Fill),
+                pick_list(
+                    preferences::ColorMode::ALL,
+                    Some(prefs.color_mode),
+                    Message::ColorMode
+                ),
+            ]
+            .align_y(Alignment::Center),
+            row![
                 text(crate::l10n::text("语言")).size(14).width(Fill),
                 pick_list(
                     vec!["中文", "English"],
@@ -1313,14 +1314,16 @@ impl App {
     }
 }
 
-struct FolderIcon;
+struct FolderIcon {
+    on_sky: bool,
+}
 impl iced::widget::canvas::Program<Message> for FolderIcon {
     type State = ();
     fn draw(
         &self,
         _state: &(),
         renderer: &iced::Renderer,
-        _theme: &iced::Theme,
+        theme: &iced::Theme,
         bounds: iced::Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<iced::widget::canvas::Geometry> {
@@ -1337,7 +1340,13 @@ impl iced::widget::canvas::Program<Message> for FolderIcon {
         });
         frame.stroke(
             &path,
-            Stroke::default().with_color(style::INK).with_width(1.5),
+            Stroke::default()
+                .with_color(if self.on_sky {
+                    iced::Color::WHITE
+                } else {
+                    style::colors(theme).text
+                })
+                .with_width(1.5),
         );
         vec![frame.into_geometry()]
     }

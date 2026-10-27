@@ -176,6 +176,7 @@ pub enum Message {
     Hide(Option<iced::window::Id>),
     Show(Option<iced::window::Id>),
     PrefBool(String, bool),
+    ColorMode(preferences::ColorMode),
     PrefText(String, String),
     Saved(Result<(), String>),
     Tas(TasAction),
@@ -1569,6 +1570,10 @@ impl App {
                 return iced::window::set_mode(id, iced::window::Mode::Windowed)
                     .chain(iced::window::gain_focus(id));
             }
+            Message::ColorMode(mode) => {
+                self.preferences.color_mode = mode;
+                return self.save_preferences();
+            }
             Message::PrefBool(key, value) => {
                 match key.as_str() {
                     "hide" => self.preferences.hide_on_launch = value,
@@ -2124,6 +2129,9 @@ impl App {
             self.error(e);
         }
         Task::none()
+    }
+    pub fn theme(&self) -> iced::Theme {
+        style::theme(self.preferences.color_mode)
     }
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![

@@ -2,6 +2,26 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::PathBuf};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ColorMode {
+    Light,
+    #[default]
+    #[serde(other)]
+    Dark,
+}
+impl ColorMode {
+    pub const ALL: [Self; 2] = [Self::Light, Self::Dark];
+}
+impl std::fmt::Display for ColorMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&crate::l10n::text(match self {
+            Self::Light => "浅色",
+            Self::Dark => "深色",
+        }))
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
@@ -11,6 +31,7 @@ pub struct Preferences {
     pub level_slot: u8,
     pub motd: String,
     pub language: String,
+    pub color_mode: ColorMode,
     pub enable_tas: bool,
     pub playtime: u64,
     pub last_played: Option<u64>,
@@ -25,6 +46,7 @@ impl Default for Preferences {
             level_slot: 0,
             motd: String::new(),
             language: "zh".into(),
+            color_mode: ColorMode::default(),
             enable_tas: false,
             playtime: 0,
             last_played: None,
@@ -54,13 +76,20 @@ fn file_path() -> Result<PathBuf, String> {
 
 pub fn load() -> Result<Preferences, String> {
     let path = file_path()?;
-    match fs::read(path) {
-        Ok(bytes) => {
-            serde_json::from_slice(&bytes).map_err(|error| format!("无法读取启动器配置：{error}"))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Preferences::default()),
-        Err(error) => Err(format!("无法读取启动器配置：{error}")),
+    let mut preferences = match fs::read(path) {
+        Ok(bytes) => serde_json::from_slice::<Preferences>(&bytes)
+            .map_err(|error| format!("无法读取启动器配置：{error}"))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Preferences::default(),
+        Err(error) => return Err(format!("无法读取启动器配置：{error}")),
+    };
+    // Inherit only appearance; the TAS window keeps its own editing preferences.
+    if std::env::args().any(|arg| arg == "--tas-editor")
+        && let Ok(bytes) = fs::read(base_directory()?.join("preferences.json"))
+        && let Ok(parent) = serde_json::from_slice::<Preferences>(&bytes)
+    {
+        preferences.color_mode = parent.color_mode;
     }
+    Ok(preferences)
 }
 
 static SAVE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -129,4 +158,24 @@ pub fn record(seconds: u64, last: Option<u64>) -> Result<Stats, String> {
         &serde_json::to_vec(&stats).map_err(|e| e.to_string())?,
     )?;
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn appearance_migrates_old_preferences_and_round_trips() {
+        let mut prefs: Preferences =
+            serde_json::from_str(r#"{"language":"en","hideOnLaunch":true,"enableTas":true}"#)
+                .unwrap();
+        assert_eq!(prefs.color_mode, ColorMode::Dark);
+        prefs.color_mode = ColorMode::Light;
+        let saved = serde_json::to_vec(&prefs).unwrap();
+        let restored: Preferences = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(restored.color_mode, ColorMode::Light);
+        assert!(restored.hide_on_launch && restored.enable_tas);
+        assert_eq!(restored.language, "en");
+        let unknown: Preferences = serde_json::from_str(r#"{"colorMode":"unrecognized"}"#).unwrap();
+        assert_eq!(unknown.color_mode, ColorMode::Dark);
+    }
 }

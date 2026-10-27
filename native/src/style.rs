@@ -1,226 +1,267 @@
+use crate::preferences::ColorMode;
 use iced::{
-    Border, Color, Theme, border,
+    Border, Color, Theme,
     theme::Palette,
     widget::{
         button, checkbox, container, overlay::menu, pick_list, scrollable, slider, text_input,
     },
 };
 
-pub const INK: Color = Color::from_rgb8(231, 228, 218);
-pub const MUTED: Color = Color::from_rgb8(152, 151, 146);
-pub const PAPER: Color = Color::from_rgb8(29, 30, 31);
-pub const SKY: Color = Color::from_rgb8(23, 24, 25);
-pub const LINE: Color = Color::from_rgb8(55, 56, 57);
-pub const WOOD: Color = Color::from_rgb8(172, 149, 108);
-
-pub fn theme() -> Theme {
+#[derive(Clone, Copy)]
+pub struct Colors {
+    pub background: Color,
+    pub surface: Color,
+    pub text: Color,
+    pub muted: Color,
+    pub line: Color,
+    pub hover: Color,
+    pub selected: Color,
+    pub focus: Color,
+    pub solid: Color,
+    pub on_solid: Color,
+}
+fn palette(mode: ColorMode) -> Colors {
+    if mode == ColorMode::Light {
+        Colors {
+            background: Color::from_rgb8(246, 247, 248),
+            surface: Color::WHITE,
+            text: Color::from_rgb8(34, 38, 43),
+            muted: Color::from_rgb8(114, 121, 130),
+            line: Color::from_rgb8(217, 222, 228),
+            hover: Color::from_rgb8(235, 238, 242),
+            selected: Color::from_rgb8(223, 228, 234),
+            focus: Color::from_rgb8(105, 117, 132),
+            solid: Color::from_rgb8(67, 77, 90),
+            on_solid: Color::WHITE,
+        }
+    } else {
+        Colors {
+            background: Color::from_rgb8(27, 29, 32),
+            surface: Color::from_rgb8(22, 24, 27),
+            text: Color::from_rgb8(229, 233, 238),
+            muted: Color::from_rgb8(146, 154, 165),
+            line: Color::from_rgb8(56, 62, 70),
+            hover: Color::from_rgb8(40, 45, 52),
+            selected: Color::from_rgb8(51, 58, 68),
+            focus: Color::from_rgb8(139, 154, 174),
+            solid: Color::from_rgb8(189, 199, 213),
+            on_solid: Color::from_rgb8(25, 29, 35),
+        }
+    }
+}
+pub fn colors(theme: &Theme) -> Colors {
+    palette(if theme.palette().background.r > 0.5 {
+        ColorMode::Light
+    } else {
+        ColorMode::Dark
+    })
+}
+pub fn theme(mode: ColorMode) -> Theme {
+    let c = palette(mode);
     Theme::custom(
-        "Ballance".to_owned(),
+        format!("Ballance {mode:?}"),
         Palette {
-            background: PAPER,
-            text: INK,
-            primary: WOOD,
-            success: Color::from_rgb8(121, 166, 126),
-            danger: Color::from_rgb8(210, 134, 126),
-            warning: WOOD,
+            background: c.background,
+            text: c.text,
+            primary: c.solid,
+            success: Color::from_rgb8(78, 148, 107),
+            danger: Color::from_rgb8(188, 91, 98),
+            warning: c.focus,
         },
     )
 }
-
-pub fn sidebar(_: &Theme) -> container::Style {
+fn outline(color: Color) -> Border {
+    Border {
+        color,
+        width: 1.0,
+        radius: 4.0.into(),
+    }
+}
+pub fn sidebar(theme: &Theme) -> container::Style {
+    let c = colors(theme);
     container::Style {
-        background: Some(SKY.into()),
+        background: Some(c.surface.into()),
+        text_color: Some(c.text),
         border: Border {
-            color: LINE,
+            color: c.line,
             width: 1.0,
             ..Border::default()
         },
         ..container::Style::default()
     }
 }
-
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
-    let mut style = button::primary(theme, status);
-    style.border.radius = border::Radius::from(4.0);
-    style
+    let c = colors(theme);
+    button::Style {
+        background: Some(
+            match status {
+                button::Status::Hovered => c.focus,
+                button::Status::Disabled => c.selected,
+                _ => c.solid,
+            }
+            .into(),
+        ),
+        text_color: if status == button::Status::Disabled {
+            c.muted
+        } else {
+            c.on_solid
+        },
+        border: Border {
+            radius: 4.0.into(),
+            ..Border::default()
+        },
+        ..button::Style::default()
+    }
 }
-
-/// Transparent hit target: the actual game's texture supplies the button appearance.
+/// The source texture and its bitmap caption retain their original colors in either theme.
 pub fn original_button(_: &Theme, _: button::Status) -> button::Style {
     button::Style {
         text_color: Color::WHITE,
         ..button::Style::default()
     }
 }
-
-pub fn quiet(_: &Theme, status: button::Status) -> button::Style {
-    let mut style = button::Style {
-        text_color: INK,
+pub fn quiet(theme: &Theme, status: button::Status) -> button::Style {
+    let c = colors(theme);
+    button::Style {
+        text_color: if status == button::Status::Disabled {
+            c.muted
+        } else {
+            c.text
+        },
+        background: match status {
+            button::Status::Hovered => Some(c.hover.into()),
+            button::Status::Pressed => Some(c.selected.into()),
+            _ => None,
+        },
         border: Border {
-            radius: border::Radius::from(4.0),
+            radius: 4.0.into(),
             ..Border::default()
         },
         ..button::Style::default()
-    };
-    match status {
-        button::Status::Hovered => {
-            style.background = Some(Color::from_rgb8(58, 51, 40).into());
-            style.text_color = Color::from_rgb8(243, 226, 193);
-            style.border.color = Color::from_rgb8(110, 94, 65);
-            style.border.width = 1.0;
-        }
-        button::Status::Pressed => {
-            style.background = Some(Color::from_rgb8(76, 63, 44).into());
-            style.text_color = Color::WHITE;
-            style.border.color = WOOD;
-            style.border.width = 1.0;
-        }
-        button::Status::Disabled => style.text_color = MUTED,
-        button::Status::Active => {}
     }
-    style
+}
+pub fn sky_button(_: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        text_color: Color::WHITE,
+        background: match status {
+            button::Status::Hovered => Some(Color::from_rgba8(0, 0, 0, 0.16).into()),
+            button::Status::Pressed => Some(Color::from_rgba8(0, 0, 0, 0.28).into()),
+            _ => None,
+        },
+        border: Border {
+            radius: 4.0.into(),
+            ..Border::default()
+        },
+        ..button::Style::default()
+    }
 }
 pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let mut style = quiet(theme, status);
-        if status == button::Status::Active {
-            style.text_color = if selected {
-                Color::from_rgb8(228, 207, 168)
-            } else {
-                INK
-            };
-            if selected {
-                style.background = Some(Color::from_rgb8(48, 43, 35).into());
-                style.border.color = Color::from_rgb8(99, 84, 59);
-                style.border.width = 1.0;
-            }
+        if selected && status == button::Status::Active {
+            style.background = Some(colors(theme).selected.into());
         }
         style
     }
 }
 pub fn tab(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    move |theme, status| {
-        let mut style = quiet(theme, status);
-        if selected && status == button::Status::Active {
-            style.text_color = Color::from_rgb8(228, 207, 168);
-            style.background = Some(Color::from_rgb8(48, 43, 35).into());
-            style.border.color = Color::from_rgb8(99, 84, 59);
-            style.border.width = 1.0;
-        }
-        style
-    }
+    nav(selected)
 }
-pub fn menu(_: &Theme) -> container::Style {
+pub fn menu(theme: &Theme) -> container::Style {
+    let c = colors(theme);
     container::Style {
-        background: Some(Color::from_rgb8(32, 33, 34).into()),
-        text_color: Some(INK),
-        border: Border {
-            color: LINE,
-            width: 1.0,
-            radius: border::Radius::from(5.0),
-        },
+        background: Some(c.surface.into()),
+        text_color: Some(c.text),
+        border: outline(c.line),
         ..container::Style::default()
     }
 }
-pub fn toast(alpha: f32) -> container::Style {
+pub fn toast(theme: &Theme, alpha: f32) -> container::Style {
+    let c = colors(theme);
     container::Style {
-        background: Some(Color::from_rgb8(49, 43, 34).scale_alpha(alpha).into()),
-        text_color: Some(INK.scale_alpha(alpha)),
-        border: Border {
-            color: WOOD.scale_alpha(alpha * 0.6),
-            width: 1.0,
-            radius: border::Radius::from(5.0),
-        },
+        background: Some(c.surface.scale_alpha(alpha).into()),
+        text_color: Some(c.text.scale_alpha(alpha)),
+        border: outline(c.focus.scale_alpha(alpha)),
         ..container::Style::default()
     }
 }
-
 pub fn shade(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Color::from_rgba8(0, 0, 0, 0.65).into()),
+        background: Some(Color::from_rgba8(0, 0, 0, 0.5).into()),
         ..container::Style::default()
     }
 }
-
-pub fn input(_: &Theme, status: text_input::Status) -> text_input::Style {
-    let disabled = matches!(status, text_input::Status::Disabled);
+pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
+    let c = colors(theme);
     let color = match status {
-        text_input::Status::Focused { .. } => WOOD,
-        text_input::Status::Hovered => Color::from_rgb8(104, 94, 76),
-        _ => LINE,
+        text_input::Status::Focused { .. } => c.focus,
+        text_input::Status::Hovered => c.muted,
+        _ => c.line,
     };
     text_input::Style {
-        background: SKY.into(),
-        border: Border {
-            color,
-            width: 1.0,
-            radius: 4.0.into(),
+        background: c.surface.into(),
+        border: outline(color),
+        icon: c.muted,
+        placeholder: c.muted,
+        value: if matches!(status, text_input::Status::Disabled) {
+            c.muted
+        } else {
+            c.text
         },
-        icon: MUTED,
-        placeholder: MUTED,
-        value: if disabled { MUTED } else { INK },
-        selection: Color::from_rgb8(93, 78, 54),
+        selection: c.selected,
     }
 }
-
-pub fn select(_: &Theme, status: pick_list::Status) -> pick_list::Style {
+pub fn select(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+    let c = colors(theme);
     let (color, background) = match status {
-        pick_list::Status::Opened { .. } => (WOOD, Color::from_rgb8(48, 43, 35)),
-        pick_list::Status::Hovered => (Color::from_rgb8(104, 94, 76), Color::from_rgb8(38, 37, 34)),
-        pick_list::Status::Active => (LINE, SKY),
+        pick_list::Status::Opened { .. } => (c.focus, c.hover),
+        pick_list::Status::Hovered => (c.muted, c.hover),
+        pick_list::Status::Active => (c.line, c.surface),
     };
     pick_list::Style {
-        text_color: INK,
-        placeholder_color: MUTED,
-        handle_color: WOOD,
+        text_color: c.text,
+        placeholder_color: c.muted,
+        handle_color: c.muted,
         background: background.into(),
-        border: Border {
-            color,
-            width: 1.0,
-            radius: 4.0.into(),
-        },
+        border: outline(color),
     }
 }
-
-pub fn select_menu(_: &Theme) -> menu::Style {
+pub fn select_menu(theme: &Theme) -> menu::Style {
+    let c = colors(theme);
     menu::Style {
-        background: Color::from_rgb8(32, 33, 34).into(),
-        border: Border {
-            color: LINE,
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        text_color: INK,
-        selected_text_color: Color::from_rgb8(243, 226, 193),
-        selected_background: Color::from_rgb8(58, 51, 40).into(),
+        background: c.surface.into(),
+        border: outline(c.line),
+        text_color: c.text,
+        selected_text_color: c.text,
+        selected_background: c.selected.into(),
         shadow: iced::Shadow::default(),
     }
 }
-
-pub fn check(_: &Theme, status: checkbox::Status) -> checkbox::Style {
+pub fn check(theme: &Theme, status: checkbox::Status) -> checkbox::Style {
+    let c = colors(theme);
     let (checked, hovered, disabled) = match status {
         checkbox::Status::Active { is_checked } => (is_checked, false, false),
         checkbox::Status::Hovered { is_checked } => (is_checked, true, false),
         checkbox::Status::Disabled { is_checked } => (is_checked, false, true),
     };
-    let accent = if disabled { MUTED } else { WOOD };
+    let accent = if disabled { c.muted } else { c.solid };
     checkbox::Style {
-        background: if checked { accent.into() } else { SKY.into() },
-        icon_color: SKY,
+        background: if checked {
+            accent.into()
+        } else {
+            c.surface.into()
+        },
+        icon_color: c.on_solid,
         border: Border {
-            color: if checked || hovered {
-                accent
-            } else {
-                Color::from_rgb8(98, 99, 96)
-            },
+            color: if checked || hovered { accent } else { c.muted },
             width: 1.0,
             radius: 3.0.into(),
         },
-        text_color: Some(if disabled { MUTED } else { INK }),
+        text_color: Some(if disabled { c.muted } else { c.text }),
     }
 }
-
 pub fn scroll(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let c = colors(theme);
     let mut style = scrollable::default(theme, status);
     let (horizontal, vertical) = match status {
         scrollable::Status::Hovered {
@@ -247,12 +288,7 @@ pub fn scroll(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
     ] {
         rail.background = None;
         rail.border = Border::default();
-        rail.scroller.background = if hovered {
-            WOOD
-        } else {
-            Color::from_rgb8(83, 82, 77)
-        }
-        .into();
+        rail.scroller.background = if hovered { c.focus } else { c.line }.into();
         rail.scroller.border = Border {
             radius: 4.0.into(),
             ..Border::default()
@@ -260,12 +296,12 @@ pub fn scroll(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
     }
     style
 }
-
 pub fn range(theme: &Theme, status: slider::Status) -> slider::Style {
+    let c = colors(theme);
     let mut style = slider::default(theme, status);
-    style.rail.backgrounds = (WOOD.into(), LINE.into());
+    style.rail.backgrounds = (c.focus.into(), c.line.into());
     style.rail.width = 3.0;
-    style.handle.background = WOOD.into();
-    style.handle.border_color = WOOD;
+    style.handle.background = c.solid.into();
+    style.handle.border_color = c.solid;
     style.with_circular_handle(6.0)
 }

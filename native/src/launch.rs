@@ -9,6 +9,33 @@ use iced::advanced::{
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme};
 use std::time::{Duration, Instant};
 
+/// Match the original menu's label-to-button ratio, centered over the whole 256px skin.
+pub fn caption<'a>(
+    visuals: &crate::assets::GameAssets,
+    label: &str,
+    enabled: bool,
+) -> Element<'a, Message> {
+    use iced::widget::{container, image, text};
+    let opacity = if enabled { 1.0 } else { 0.5 };
+    let content: Element<'a, Message> = if let Some(caption) = visuals.captions.get(label) {
+        let height = 11.0;
+        image(caption.handle.clone())
+            .width(caption.width as f32 * height / caption.height as f32)
+            .height(height)
+            .opacity(opacity)
+            .into()
+    } else {
+        text(label.to_uppercase())
+            .size(13)
+            .color(iced::Color::WHITE.scale_alpha(opacity))
+            .into()
+    };
+    container(content)
+        .center_x(iced::Fill)
+        .center_y(iced::Fill)
+        .into()
+}
+
 pub fn button<'a>(
     normal: image::Handle,
     selected: image::Handle,
