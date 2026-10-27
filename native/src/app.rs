@@ -7,7 +7,6 @@ use iced::{
     Alignment, Element, Fill, Subscription, Task,
     widget::{
         button, column, container, image, row, rule, scrollable, space, stack, text, text_input,
-        tooltip,
     },
 };
 use std::{path::PathBuf, time::Duration};
@@ -243,23 +242,11 @@ impl App {
     pub fn view(&self) -> Element<'_, Message> {
         let sidebar = container(
             column![
-                column![
-                    text("ROCKOON").size(19).color(style::INK),
-                    text("Ballance launcher").size(11).color(style::MUTED),
-                ]
-                .spacing(4),
+                text("ROCKOON").size(19).color(style::INK),
                 space::vertical().height(32),
                 self.nav("开始", Page::Home),
                 self.nav("地图", Page::Maps),
                 self.nav("模组", Page::Mods),
-                space::vertical(),
-                text(if self.running.is_some() {
-                    "●  游戏运行中"
-                } else {
-                    "○  就绪"
-                })
-                .size(12)
-                .color(style::MUTED),
             ]
             .spacing(7)
             .height(Fill),
@@ -275,7 +262,7 @@ impl App {
                 container(
                     row![
                         text(notice).size(13).width(Fill),
-                        button(text("关闭").size(12))
+                        button(text("关闭").size(14))
                             .style(style::quiet)
                             .on_press(Message::Dismiss),
                     ]
@@ -315,13 +302,8 @@ impl App {
         };
         let mut actions = row![].spacing(8).align_y(Alignment::Center);
         if let Some(instance) = &self.instance {
-            actions = actions.push(tooltip(
-                text(&instance.name).size(13).color(style::MUTED),
-                container(text(instance.root.to_string_lossy().into_owned()).size(12)).padding(8),
-                tooltip::Position::Bottom,
-            ));
             actions = actions.push(
-                button(text("打开目录").size(12))
+                button(text("打开目录").size(14))
                     .style(style::quiet)
                     .on_press(Message::OpenFolder(instance.root.clone())),
             );
@@ -333,7 +315,7 @@ impl App {
                 } else {
                     "更换目录"
                 })
-                .size(12),
+                .size(14),
             )
             .style(style::quiet)
             .on_press_maybe(
@@ -347,13 +329,6 @@ impl App {
     }
 
     fn home(&self) -> Element<'_, Message> {
-        let subtitle = if self.busy {
-            "正在读取游戏目录…".to_owned()
-        } else if let Some(instance) = &self.instance {
-            format!("{}  ·  {}", instance.player, instance.loader)
-        } else {
-            "选择已安装的 Ballance 游戏目录".to_owned()
-        };
         let enabled = !self.busy && !self.launching && self.running.is_none();
         let label = if self.launching {
             "正在启动…"
@@ -403,15 +378,7 @@ impl App {
             .and_then(|instance| instance.visuals.sky.as_ref());
         let foreground = container(
             column![
-                column![
-                    text("Ballance").size(44).color(style::INK),
-                    text(subtitle).size(13).color(if sky.is_some() {
-                        iced::Color::WHITE
-                    } else {
-                        style::MUTED
-                    }),
-                ]
-                .spacing(8),
+                text("Ballance").size(44).color(style::INK),
                 space::vertical(),
                 container(action)
                     .align_x(iced::alignment::Horizontal::Right)
@@ -447,9 +414,6 @@ impl App {
             return container(
                 column![
                     text("先选择游戏目录").size(20),
-                    text("在这里浏览你已安装的地图和模组。")
-                        .size(13)
-                        .color(style::MUTED),
                     button("选择目录").style(style::primary).on_press_maybe(
                         (!self.busy && !self.picking_folder).then_some(Message::PickFolder)
                     ),
@@ -487,7 +451,7 @@ impl App {
                     } else {
                         "停用"
                     })
-                    .size(12),
+                    .size(14),
                 )
                 .style(style::quiet)
                 .on_press_maybe(
@@ -495,35 +459,18 @@ impl App {
                         .then(|| Message::ToggleMod((*resource).clone())),
                 )
             } else {
-                button(text("游玩  →").size(12))
+                button(text("游玩  →").size(14))
                     .style(style::quiet)
                     .on_press_maybe(
                         (!self.busy && !self.launching && self.running.is_none())
                             .then(|| Message::Launch(Some(resource.path.clone()))),
                     )
             };
-            let details = if mods {
-                if resource.disabled {
-                    "已停用"
-                } else {
-                    "已启用"
-                }
-            } else {
-                resource
-                    .path
-                    .extension()
-                    .and_then(|extension| extension.to_str())
-                    .unwrap_or("")
-            };
             list = list.push(
                 container(
-                    row![
-                        text(&resource.name).size(14).width(Fill),
-                        text(details).size(11).color(style::MUTED),
-                        action,
-                    ]
-                    .spacing(20)
-                    .align_y(Alignment::Center),
+                    row![text(&resource.name).size(14).width(Fill), action,]
+                        .spacing(20)
+                        .align_y(Alignment::Center),
                 )
                 .padding([13, 0]),
             );
@@ -531,13 +478,14 @@ impl App {
         }
         let body: Element<'_, Message> = if matched.is_empty() {
             container(
-                text(if query.is_empty() {
-                    "还没有本地资源，可将文件放入游戏的 ModLoader 目录后刷新。"
+                text(if !query.is_empty() {
+                    "没有匹配项"
+                } else if mods {
+                    "暂无模组"
                 } else {
-                    "没有匹配的资源。"
+                    "暂无地图"
                 })
-                .size(13)
-                .color(style::MUTED),
+                .size(14),
             )
             .center_x(Fill)
             .center_y(Fill)
@@ -545,15 +493,6 @@ impl App {
         } else {
             scrollable(list).height(Fill).into()
         };
-        column![
-            toolbar,
-            text(format!("{} 项", matched.len()))
-                .size(12)
-                .color(style::MUTED),
-            body,
-        ]
-        .spacing(18)
-        .height(Fill)
-        .into()
+        column![toolbar, body,].spacing(18).height(Fill).into()
     }
 }

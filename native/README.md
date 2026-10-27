@@ -22,7 +22,7 @@ cargo build --release --manifest-path native/Cargo.toml
 
 ## 本批迁移
 
-- 开始页：选择、验证、记住游戏目录；识别 Player 与启用中的 BML/BML+。
+- 开始页：选择、验证、记住游戏目录。
 - 从 `Bin` 工作目录启动 `Player.exe`，原生查询进程，阻止已有游戏运行时重复启动。
 - 地图页：递归扫描已解压的 NMO/CMO 文件，支持中文、搜索与刷新。
 - 启动指定地图：要求实例中已启用 BML+ 和 `ModLoader/Mods/RockoonIO.bmodp`。
@@ -63,7 +63,7 @@ cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path native/Cargo.toml
 ```
 
-测试覆盖目录校验、中文/嵌套/大小写资源扫描、加载器检测、模组启停无损、
+测试覆盖目录校验、中文/嵌套/大小写资源扫描、模组启停无损、
 同名冲突拒绝覆盖、实例外路径拒绝、启动工作目录和中文地图环境变量。CI 的原生工作流单独构建并提供 Windows EXE，
 不创建应用 release。
 

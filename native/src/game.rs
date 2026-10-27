@@ -18,9 +18,6 @@ pub struct Resource {
 pub struct Instance {
     pub visuals: crate::assets::GameAssets,
     pub root: PathBuf,
-    pub name: String,
-    pub player: String,
-    pub loader: String,
     pub maps: Vec<Resource>,
     pub mods: Vec<Resource>,
 }
@@ -37,30 +34,8 @@ pub fn discover(root: PathBuf) -> Result<Instance, String> {
             return Err(format!("请选择 Ballance 游戏根目录，缺少 {directory} 目录"));
         }
     }
-    let player_size = fs::metadata(root.join("Bin/Player.exe"))
-        .map_err(error)?
-        .len();
-    let loader = if root.join("BuildingBlocks/BMLPlus.dll").is_file() {
-        "BML+"
-    } else if root.join("BuildingBlocks/BML.dll").is_file() {
-        "BML"
-    } else {
-        "原版"
-    };
     Ok(Instance {
         visuals: crate::assets::GameAssets::load(&root),
-        name: root
-            .file_name()
-            .unwrap_or(root.as_os_str())
-            .to_string_lossy()
-            .into_owned(),
-        player: if player_size == 155_648 {
-            "原版 Player"
-        } else {
-            "自定义 Player"
-        }
-        .to_owned(),
-        loader: loader.to_owned(),
         maps: list_resources(&root.join("ModLoader/Maps"), &["nmo", "cmo"], false)?,
         mods: list_resources(
             &root.join("ModLoader/Mods"),
@@ -329,22 +304,6 @@ mod tests {
         assert!(game.maps[0].name.contains("地图.NMO"));
         assert_eq!(game.mods.len(), 1);
         assert!(game.mods[0].disabled);
-    }
-
-    #[test]
-    fn ignores_disabled_loaders_and_prefers_enabled_bml_plus() {
-        let temporary = instance();
-        fs::write(temporary.path().join("BuildingBlocks/BML.dll.disable"), []).unwrap();
-        assert_eq!(
-            discover(temporary.path().to_owned()).unwrap().loader,
-            "原版"
-        );
-        fs::write(temporary.path().join("BuildingBlocks/BML.dll"), []).unwrap();
-        fs::write(temporary.path().join("BuildingBlocks/BMLPlus.dll"), []).unwrap();
-        assert_eq!(
-            discover(temporary.path().to_owned()).unwrap().loader,
-            "BML+"
-        );
     }
 
     #[test]
