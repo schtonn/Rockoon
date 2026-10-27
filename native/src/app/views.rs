@@ -324,9 +324,29 @@ impl App {
                     .on_press(Message::Page(page)),
             );
         }
-        tabs.into()
+        if self.page.section() == Page::Maps {
+            tabs = tabs.push(space::horizontal()).push(action(
+                if self.opening_hub {
+                    "正在连接…"
+                } else {
+                    "社区资源站 ↗"
+                },
+                Message::OpenHub,
+                !self.opening_hub,
+            ));
+        }
+        tabs.width(Fill).into()
     }
     fn header(&self) -> Element<'_, Message> {
+        if self.instance.is_none() {
+            return if self.page == Page::Home {
+                space().into()
+            } else {
+                text(crate::l10n::text(self.page.section_label()))
+                    .size(22)
+                    .into()
+            };
+        }
         let full = self
             .instance
             .as_ref()
@@ -392,6 +412,9 @@ impl App {
         header.push(space::horizontal()).push(actions).into()
     }
     fn home(&self) -> Element<'_, Message> {
+        if self.instance.is_none() {
+            return self.setup();
+        }
         let enabled =
             !self.busy && !self.launching && !self.jobs.iter().any(|j| !j.progress().done);
         let (label, message) = if self.launching {
@@ -445,11 +468,41 @@ impl App {
             foreground.into()
         }
     }
-    fn empty(&self) -> Element<'_, Message> {
-        container(action("选择游戏目录", Message::PickFolder, !self.locked()))
+    fn setup(&self) -> Element<'_, Message> {
+        if self.busy {
+            return container(text(crate::l10n::text("读取中…")).size(14))
+                .center_x(Fill)
+                .center_y(Fill)
+                .into();
+        }
+        let mut content = column![
+            text(crate::l10n::text("选择 Ballance")).size(24),
+            text(crate::l10n::text("选择已有的游戏文件夹，或安装一份游戏。")).size(14),
+        ]
+        .spacing(18);
+        if let Some(problem) = &self.setup_problem {
+            content = content.push(text(problem).size(14));
+        }
+        content = content.push(
+            row![
+                button(text(crate::l10n::text("选择已有游戏")).size(14))
+                    .padding([10, 14])
+                    .style(style::primary)
+                    .on_press_maybe(
+                        (!self.locked() && !self.picking_folder).then_some(Message::PickFolder)
+                    ),
+                action("下载并安装", Message::Page(Page::Install), !self.locked()),
+            ]
+            .spacing(12),
+        );
+        container(container(content).max_width(480))
+            .padding(28)
             .center_x(Fill)
             .center_y(Fill)
             .into()
+    }
+    fn empty(&self) -> Element<'_, Message> {
+        self.setup()
     }
     fn resources(&self) -> Element<'_, Message> {
         let Some(root) = self.root() else {
@@ -576,7 +629,10 @@ impl App {
                 None
             };
             let more = crate::popup::menu(
-                action("···", Message::EntryMenu(entry.path.clone()), true),
+                button(iced::widget::canvas(MoreIcon).width(18).height(14))
+                    .padding([7, 7])
+                    .style(style::quiet)
+                    .on_press(Message::EntryMenu(entry.path.clone())),
                 panel,
                 true,
             );
@@ -586,10 +642,51 @@ impl App {
             list = list.push(container(line).padding([8, 0]));
             list = list.push(rule::horizontal(1));
         }
-        if self.entries.is_empty() {
-            list = list.push(text(crate::l10n::text("暂无资源")).size(14));
+        let visible = self
+            .entries
+            .iter()
+            .filter(|entry| workspace::matches(&entry.name, &self.search))
+            .count();
+        if visible == 0 {
+            let mut empty = column![
+                text(crate::l10n::text(if self.search.trim().is_empty() {
+                    "这里还没有资源"
+                } else {
+                    "没有匹配的资源"
+                }))
+                .size(16),
+            ]
+            .spacing(12);
+            if self.search.trim().is_empty() {
+                empty = empty.push(
+                    text(crate::l10n::text(if self.protocol_ready {
+                        "在社区资源站点击“一键安装”，也可以导入本地文件。"
+                    } else {
+                        "可以导入本地文件，或打开社区资源站下载。"
+                    }))
+                    .size(14),
+                );
+                if !self.protocol_ready {
+                    empty = empty.push(action("启用一键安装", Message::RegisterProtocol, true));
+                }
+            }
+            list = list.push(container(empty).padding([24, 0]));
         }
         let mut body = column![toolbar, crumbs].spacing(12);
+        if matches!(kind, Kind::Maps | Kind::Mods)
+            && !root.join("BuildingBlocks/BML.dll").is_file()
+            && !root.join("BuildingBlocks/BMLPlus.dll").is_file()
+        {
+            body = body.push(
+                row![
+                    text(crate::l10n::text("使用自制地图和模组需要 BML / BML+。"))
+                        .size(14)
+                        .width(Fill),
+                    action("安装支持", Message::Page(Page::Install), !self.locked()),
+                ]
+                .align_y(Alignment::Center),
+            );
+        }
         if kind == Kind::Skies {
             body = body.push(
                 row![
@@ -619,135 +716,289 @@ impl App {
             .text_size(14)
             .into()
     }
-    fn configuration(&self) -> Element<'_, Message> {
-        if self.instance.is_none() {
-            return self.empty();
+    fn configuration_field<'a>(
+        &'a self,
+        i: usize,
+        field: &'a config::Field,
+    ) -> Element<'a, Message> {
+        if field.key == "/volume" {
+            let value = field.value.parse::<f32>().unwrap_or(1.0).clamp(0.0, 1.0);
+            let control: Element<'_, Message> = if self.locked() {
+                space::horizontal().width(180).into()
+            } else {
+                iced::widget::slider(0.0..=1.0, value, move |v| {
+                    Message::Field(i, format!("{v:.2}"))
+                })
+                .step(0.01_f32)
+                .width(180)
+                .style(style::range)
+                .into()
+            };
+            row![
+                text(crate::l10n::text("音量")).size(14).width(Fill),
+                control,
+                text(format!("{:.0}%", value * 100.0)).size(14).width(44),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into()
+        } else if field.boolean {
+            let is_on = matches!(field.value.to_lowercase().as_str(), "1" | "true" | "yes");
+            let numeric = field.value == "0" || field.value == "1";
+            checkbox(is_on)
+                .label(crate::l10n::text(&field.label))
+                .on_toggle_maybe((!self.locked()).then_some(move |enabled| {
+                    Message::Field(
+                        i,
+                        if numeric {
+                            if enabled { "1" } else { "0" }
+                        } else if enabled {
+                            "true"
+                        } else {
+                            "false"
+                        }
+                        .into(),
+                    )
+                }))
+                .into()
+        } else if field.key.starts_with("/key") {
+            let selected = field
+                .value
+                .parse::<i32>()
+                .ok()
+                .and_then(|id| crate::keys::ALL.iter().find(|key| key.id == id))
+                .copied();
+            row![
+                text(crate::l10n::text(&field.label)).size(14).width(Fill),
+                pick_list(crate::keys::ALL, selected, move |key| Message::Field(
+                    i,
+                    key.id.to_string()
+                ))
+                .width(130),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into()
+        } else {
+            row![
+                text(crate::l10n::text(&field.label)).size(14).width(Fill),
+                text_input("", &field.value)
+                    .on_input(move |s| Message::Field(i, s))
+                    .padding(8)
+                    .width(180),
+            ]
+            .spacing(24)
+            .align_y(Alignment::Center)
+            .into()
         }
+    }
+    fn configuration(&self) -> Element<'_, Message> {
+        let Some(root) = self.root() else {
+            return self.empty();
+        };
         let mut toolbar = row![].spacing(12).align_y(Alignment::Center);
         if self.page == Page::Config {
-            let mut names = vec!["游戏选项".to_owned()];
+            let mut names = vec!["游戏设置".to_owned()];
             names.extend(
                 self.config_files
                     .iter()
+                    .filter(|path| **path != root.join("Bin/Player.ini"))
                     .filter_map(|p| p.file_name())
                     .map(|s| s.to_string_lossy().to_string()),
             );
-            toolbar = toolbar.push(
-                pick_list(names, Some(self.config_name.clone()), Message::SelectConfig)
-                    .text_size(14),
-            );
+            toolbar = toolbar.push(pick_list(
+                names,
+                Some(self.config_name.clone()),
+                Message::SelectConfig,
+            ));
         }
         let Some(doc) = &self.document else {
             return column![
                 toolbar,
-                text(if self.busy {
+                text(crate::l10n::text(if self.busy {
                     "读取中…"
                 } else {
-                    "无法读取配置"
-                })
-                .size(14)
+                    "无法读取配置，请重新读取或选择其他配置。"
+                }))
+                .size(14),
+                action("重新读取", Message::Refresh, !self.busy),
             ]
             .spacing(18)
             .into();
         };
         let groups = doc.groups();
-        if groups.len() > 1 {
-            toolbar = toolbar
-                .push(pick_list(groups, Some(self.group.clone()), Message::Group).text_size(14));
+        if self.page == Page::Data && groups.len() > 1 {
+            toolbar = toolbar.push(pick_list(
+                groups.clone(),
+                Some(self.group.clone()),
+                Message::Group,
+            ));
         }
         toolbar = toolbar
             .push(
                 text_input("搜索配置", &self.search)
                     .on_input(Message::Search)
-                    .padding(9)
                     .width(Fill),
             )
             .push(action(
                 if doc.dirty { "保存修改" } else { "保存" },
                 Message::SaveDocument,
                 doc.dirty && !self.locked(),
+            ))
+            .push(action(
+                "重新读取",
+                Message::Refresh,
+                !self.busy && !self.mutating,
             ));
-        toolbar = toolbar.push(action(
-            "重新读取",
-            Message::Refresh,
-            !self.busy && !self.mutating,
-        ));
         if self.page == Page::Data {
-            toolbar = toolbar.push(action("全部解锁", Message::UnlockAll, !self.locked()));
-            toolbar = toolbar.push(action(
-                "重置排行",
-                Message::Prompt(PromptKind::ResetData),
-                !self.locked() && self.group != "关卡",
-            ));
+            toolbar = toolbar
+                .push(action("全部解锁", Message::UnlockAll, !self.locked()))
+                .push(action(
+                    "重置排行",
+                    Message::Prompt(PromptKind::ResetData),
+                    !self.locked() && self.group != "关卡",
+                ));
         }
-        let mut fields = column![].spacing(0);
-        for (i, field) in doc.fields.iter().enumerate().filter(|(_, f)| {
-            f.group == self.group
-                && (workspace::matches(&f.label, &self.search)
-                    || workspace::matches(&f.key, &self.search))
-        }) {
-            let control: Element<'_, Message> = if field.boolean {
-                let is_on = matches!(field.value.to_lowercase().as_str(), "1" | "true" | "yes");
-                let numeric = field.value == "0" || field.value == "1";
-                checkbox(is_on)
-                    .label(crate::l10n::text(&field.label))
-                    .text_size(14)
-                    .on_toggle_maybe((!self.locked()).then_some(move |enabled| {
-                        Message::Field(
-                            i,
-                            if numeric {
-                                if enabled { "1" } else { "0" }
-                            } else if enabled {
-                                "true"
-                            } else {
-                                "false"
-                            }
-                            .into(),
-                        )
-                    }))
-                    .into()
-            } else if field.key.starts_with("/key") {
-                let selected = field
-                    .value
-                    .parse::<i32>()
-                    .ok()
-                    .and_then(|id| crate::keys::ALL.iter().find(|k| k.id == id))
-                    .copied();
-                row![
-                    text(crate::l10n::text(&field.label)).size(14).width(Fill),
-                    pick_list(crate::keys::ALL, selected, move |key| Message::Field(
-                        i,
-                        key.id.to_string()
-                    ))
-                    .text_size(14)
-                ]
-                .align_y(Alignment::Center)
-                .into()
-            } else {
-                row![
-                    text(crate::l10n::text(&field.label)).size(14).width(Fill),
-                    text_input("", &field.value)
-                        .on_input(move |s| Message::Field(i, s))
-                        .padding(8)
-                        .width(220)
-                ]
-                .spacing(24)
-                .align_y(Alignment::Center)
-                .into()
-            };
-            fields = fields
-                .push(container(control).padding([11, 0]))
-                .push(rule::horizontal(1));
+        let searching = !self.search.trim().is_empty();
+        let mut sections = column![].spacing(10);
+        let mut shown = 0;
+        for group in &groups {
+            if self.page == Page::Data && *group != self.group {
+                continue;
+            }
+            let fields: Vec<_> = doc
+                .fields
+                .iter()
+                .enumerate()
+                .filter(|(_, field)| {
+                    field.group == *group
+                        && (workspace::matches(&field.label, &self.search)
+                            || workspace::matches(&field.key, &self.search))
+                })
+                .collect();
+            if fields.is_empty() {
+                continue;
+            }
+            shown += fields.len();
+            let open = self.page == Page::Data
+                || searching
+                || self
+                    .config_sections
+                    .get(&format!("{}:{group}", self.config_name))
+                    .copied()
+                    .unwrap_or(!matches!(group.as_str(), "键位与相机" | "高级"));
+            let mut section = column![].spacing(4);
+            if self.page == Page::Config {
+                section = section.push(
+                    button(
+                        row![
+                            text(if open { "⌄" } else { "›" }).size(16).width(16),
+                            text(crate::l10n::text(group)).size(14).width(Fill),
+                        ]
+                        .spacing(5)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding([8, 4])
+                    .width(Fill)
+                    .style(style::quiet)
+                    .on_press(Message::ConfigSection(group.clone())),
+                );
+            }
+            if open {
+                let mut keys = Vec::new();
+                let mut toggles = Vec::new();
+                let resolution = (doc.source == Source::Game).then(|| {
+                    (
+                        fields.iter().find(|(_, f)| f.key == "Width").copied(),
+                        fields.iter().find(|(_, f)| f.key == "Height").copied(),
+                    )
+                });
+                for (i, field) in fields {
+                    if field.key.starts_with("/key") {
+                        keys.push((i, field));
+                    } else if field.boolean && doc.source == Source::Game {
+                        toggles.push((i, field));
+                    } else if resolution.is_some_and(|(w, h)| w.is_some() && h.is_some())
+                        && matches!(field.key.as_str(), "Width" | "Height")
+                    {
+                        if field.key == "Width" {
+                            let (_, height) = resolution.unwrap();
+                            let (hi, h) = height.unwrap();
+                            section = section.push(
+                                container(
+                                    row![
+                                        text(crate::l10n::text("分辨率")).size(14).width(Fill),
+                                        text_input("", &field.value)
+                                            .on_input(move |v| Message::Field(i, v))
+                                            .padding(8)
+                                            .width(80),
+                                        text("×").size(14),
+                                        text_input("", &h.value)
+                                            .on_input(move |v| Message::Field(hi, v))
+                                            .padding(8)
+                                            .width(80),
+                                    ]
+                                    .spacing(8)
+                                    .align_y(Alignment::Center),
+                                )
+                                .padding([8, 4]),
+                            );
+                        }
+                    } else {
+                        section = section
+                            .push(container(self.configuration_field(i, field)).padding([8, 4]));
+                    }
+                }
+                for pair in toggles.chunks(2) {
+                    let mut line = row![].spacing(28);
+                    for (i, field) in pair {
+                        line =
+                            line.push(container(self.configuration_field(*i, field)).width(Fill));
+                    }
+                    if pair.len() == 1 {
+                        line = line.push(space::horizontal());
+                    }
+                    section = section.push(container(line).padding([8, 4]));
+                }
+                keys.sort_by_key(|(_, field)| {
+                    [
+                        "/keyForward",
+                        "/keyBackward",
+                        "/keyLeft",
+                        "/keyRight",
+                        "/keyRotateCam",
+                        "/keyLiftCam",
+                    ]
+                    .iter()
+                    .position(|key| *key == field.key)
+                    .unwrap_or(usize::MAX)
+                });
+                for pair in keys.chunks(2) {
+                    let mut line = row![].spacing(28);
+                    for (i, field) in pair {
+                        line =
+                            line.push(container(self.configuration_field(*i, field)).width(Fill));
+                    }
+                    if pair.len() == 1 {
+                        line = line.push(space::horizontal());
+                    }
+                    section = section.push(container(line).padding([6, 4]));
+                }
+            }
+            sections = sections.push(section).push(rule::horizontal(1));
+        }
+        if shown == 0 {
+            sections = sections.push(text(crate::l10n::text("没有匹配的配置项")).size(14));
         }
         column![
             toolbar,
-            scrollable(container(fields).padding(iced::Padding {
+            scrollable(container(sections).padding(iced::Padding {
                 right: 16.0,
                 ..iced::Padding::ZERO
             }))
             .height(Fill)
         ]
-        .spacing(18)
+        .spacing(16)
         .height(Fill)
         .into()
     }
@@ -802,16 +1053,20 @@ impl App {
     }
     fn install(&self) -> Element<'_, Message> {
         let mut content = column![
+            text(crate::l10n::text(
+                "安装到新的空文件夹，完成后即可启动游戏。"
+            ))
+            .size(14),
             row![
                 action("安装 Ballance", Message::InstallGame, !self.locked()),
                 checkbox(self.install_player)
-                    .label(crate::l10n::text("NewPlayer"))
+                    .label(crate::l10n::text("兼容增强（NewPlayer）"))
                     .text_size(14)
-                    .on_toggle(|p| Message::InstallChoice(p, self.install_bmlplus)),
+                    .on_toggle(|p| Message::InstallChoice(p, p && self.install_bmlplus)),
                 checkbox(self.install_bmlplus)
-                    .label(crate::l10n::text("BML+"))
+                    .label(crate::l10n::text("模组与地图（BML+）"))
                     .text_size(14)
-                    .on_toggle(|b| Message::InstallChoice(self.install_player, b)),
+                    .on_toggle(|b| Message::InstallChoice(self.install_player || b, b)),
                 space::horizontal(),
                 action("刷新", Message::Refresh, !self.busy),
             ]
@@ -938,6 +1193,16 @@ impl App {
                     "重试",
                     Message::RetryJob(job.id.clone()),
                     !self.locked(),
+                ));
+            }
+            if progress.done
+                && progress.result.as_ref().is_some_and(Result::is_ok)
+                && matches!(job.request, jobs::Request::Game { .. })
+            {
+                controls = controls.push(action(
+                    "进入游戏",
+                    Message::Page(Page::Home),
+                    self.root().as_deref() == Some(job.request.root()),
                 ));
             }
             list = list.push(controls);
@@ -1077,7 +1342,11 @@ impl App {
         content = content
             .push(action("检查更新", Message::CheckUpdate, true))
             .push(action(
-                "注册下载站一键安装",
+                if self.protocol_ready {
+                    "重新关联一键安装"
+                } else {
+                    "启用一键安装"
+                },
                 Message::RegisterProtocol,
                 true,
             ));
@@ -1311,6 +1580,29 @@ impl App {
         .spacing(12)
         .height(Fill)
         .into()
+    }
+}
+
+struct MoreIcon;
+impl iced::widget::canvas::Program<Message> for MoreIcon {
+    type State = ();
+    fn draw(
+        &self,
+        _: &(),
+        renderer: &iced::Renderer,
+        theme: &iced::Theme,
+        bounds: iced::Rectangle,
+        _: iced::mouse::Cursor,
+    ) -> Vec<iced::widget::canvas::Geometry> {
+        use iced::widget::canvas::{Frame, Path};
+        let mut frame = Frame::new(renderer, bounds.size());
+        for x in [5.0, 9.0, 13.0] {
+            frame.fill(
+                &Path::circle(iced::Point::new(x, bounds.height / 2.0), 1.0),
+                style::colors(theme).text,
+            );
+        }
+        vec![frame.into_geometry()]
     }
 }
 

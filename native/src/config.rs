@@ -7,6 +7,7 @@ use std::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
+    Game,
     Options,
     Data,
     File(PathBuf),
@@ -29,6 +30,7 @@ pub struct Document {
     pub original: Value,
     pub lines: Vec<String>,
     pub dirty: bool,
+    parts: Vec<Document>,
 }
 pub fn options(root: &Path) -> Result<Value, String> {
     let mut opts = rockoon_core::options::BallanceOptions::new();
@@ -80,6 +82,7 @@ pub fn encoded_options(root: &Path, value: &Value) -> Result<Vec<u8>, String> {
     original.dump().map_err(error)?;
     fs::read(preserved).map_err(error)
 }
+#[cfg(test)]
 pub fn save_options(root: &Path, value: &Value) -> Result<(), String> {
     workspace::replace(
         root,
@@ -129,8 +132,25 @@ pub fn load(root: &Path, source: Source) -> Result<Document, String> {
         original: Value::Null,
         lines: vec![],
         dirty: false,
+        parts: vec![],
     };
     match source {
+        Source::Game => {
+            let mut parts = vec![load(root, Source::Options)?];
+            let player = root.join("Bin/Player.ini");
+            if files(root)?.contains(&player) {
+                parts.push(load(root, Source::File(player))?);
+            }
+            doc.fields = parts
+                .iter()
+                .flat_map(|part| part.fields.iter().cloned())
+                .map(|mut field| {
+                    field.group = game_group(&field).into();
+                    field
+                })
+                .collect();
+            doc.parts = parts;
+        }
         Source::Options | Source::Data => {
             doc.original = options(root)?;
             if source == Source::Options {
@@ -258,6 +278,25 @@ pub fn load(root: &Path, source: Source) -> Result<Document, String> {
     }
     Ok(doc)
 }
+fn game_group(field: &Field) -> &'static str {
+    match field.key.trim_start_matches('/') {
+        key if key.starts_with("key") || key == "invertCamRotation" => "键位与相机",
+        "volume" => "声音",
+        "cloudLayer"
+        | "syncToScreen"
+        | "Width"
+        | "Height"
+        | "FullScreen"
+        | "Borderless"
+        | "UnlockFramerate"
+        | "UnlockWidescreen"
+        | "UnlockHighResolution"
+        | "Antialias" => "画面",
+        "lastPlayer" | "Language" | "SkipOpening" | "Rookie" | "ClipCursor" => "常规",
+        _ => "高级",
+    }
+}
+
 impl Document {
     pub fn groups(&self) -> Vec<String> {
         let mut groups = Vec::new();
@@ -266,7 +305,15 @@ impl Document {
                 groups.push(f.group.clone());
             }
         }
-        groups
+        if self.source == Source::Game {
+            ["常规", "画面", "声音", "键位与相机", "高级"]
+                .into_iter()
+                .filter(|name| groups.iter().any(|group| group == name))
+                .map(str::to_owned)
+                .collect()
+        } else {
+            groups
+        }
     }
     pub fn value(&self) -> Result<Value, String> {
         let mut value = self.original.clone();
@@ -299,7 +346,33 @@ impl Document {
     }
     pub fn save(&self, root: &Path) -> Result<(), String> {
         workspace::idle(root)?;
+        workspace::replace(root, &self.changes(root)?)
+    }
+    /// Validate and encode every source before the single write transaction begins.
+    fn changes(&self, root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
         match &self.source {
+            Source::Game => {
+                let mut changes = Vec::new();
+                let mut offset = 0;
+                for original in &self.parts {
+                    let end = offset + original.fields.len();
+                    let fields = self
+                        .fields
+                        .get(offset..end)
+                        .ok_or("配置字段不完整，请重新读取")?;
+                    if fields
+                        .iter()
+                        .zip(&original.fields)
+                        .any(|(a, b)| a.value != b.value)
+                    {
+                        let mut edited = original.clone();
+                        edited.fields = fields.to_vec();
+                        changes.extend(edited.changes(root)?);
+                    }
+                    offset = end;
+                }
+                Ok(changes)
+            }
             Source::Options | Source::Data => {
                 let edited = self.value()?;
                 let mut current = options(root)?;
@@ -323,7 +396,10 @@ impl Document {
                         }
                     }
                 }
-                save_options(root, &current)
+                Ok(vec![(
+                    root.join("Database.tdb"),
+                    encoded_options(root, &current)?,
+                )])
             }
             Source::File(path) => {
                 if fs::read_to_string(path)
@@ -346,13 +422,10 @@ impl Document {
                         lines[i] = format!("{}{}", f.prefix, f.value);
                     }
                 }
-                workspace::replace(
-                    root,
-                    &[(
-                        workspace::checked(root, path)?,
-                        (lines.join("\r\n") + "\r\n").into_bytes(),
-                    )],
-                )
+                Ok(vec![(
+                    workspace::checked(root, path)?,
+                    (lines.join("\r\n") + "\r\n").into_bytes(),
+                )])
             }
         }
     }
@@ -456,6 +529,93 @@ mod tests {
             db.get_table("NativeExtra").unwrap().cols[0].values[0].to_int(),
             4242
         );
+    }
+    fn game_fixture() -> tempfile::TempDir {
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(include_bytes!(
+            "../../src-tauri/resources/vanilla/vanilla-core.zip"
+        )))
+        .unwrap();
+        let mut bytes = Vec::new();
+        archive
+            .by_name("Database.tdb")
+            .unwrap()
+            .read_to_end(&mut bytes)
+            .unwrap();
+        fs::write(dir.path().join("Database.tdb"), bytes).unwrap();
+        fs::create_dir(dir.path().join("Bin")).unwrap();
+        fs::write(dir.path().join("Bin/Player.exe"), b"test only").unwrap();
+        fs::write(dir.path().join("Bin/Player.ini"), "; keep this comment\n[Graphics]\nWidth=1024\nFullScreen=false\n[Game]\nSkipOpening=true\nCustomValue=keep-me\n").unwrap();
+        dir
+    }
+    fn edit(doc: &mut Document, key: &str, value: &str) {
+        doc.fields
+            .iter_mut()
+            .find(|field| field.key == key)
+            .unwrap()
+            .value = value.into();
+        doc.dirty = true;
+    }
+    #[test]
+    fn game_settings_save_both_files_and_preserve_unedited_content() {
+        let root = game_fixture();
+        let mut doc = load(root.path(), Source::Game).unwrap();
+        assert!(doc.groups().contains(&"画面".to_owned()));
+        assert!(
+            doc.fields
+                .iter()
+                .any(|f| f.key == "/keyForward" && f.group == "键位与相机")
+        );
+        edit(&mut doc, "/volume", "0.25");
+        edit(&mut doc, "Width", "1280");
+        let scores = options(root.path()).unwrap()["highscores"].clone();
+        doc.save(root.path()).unwrap();
+        let actual = options(root.path()).unwrap();
+        assert!((actual["volume"].as_f64().unwrap() - 0.25).abs() < 0.001);
+        assert_eq!(actual["highscores"], scores);
+        let ini = fs::read_to_string(root.path().join("Bin/Player.ini")).unwrap();
+        assert!(
+            ini.contains("Width=1280")
+                && ini.contains("; keep this comment")
+                && ini.contains("CustomValue=keep-me")
+        );
+    }
+    #[test]
+    fn invalid_second_file_cannot_partially_save_the_first() {
+        let root = game_fixture();
+        let before_db = fs::read(root.path().join("Database.tdb")).unwrap();
+        let before_ini = fs::read(root.path().join("Bin/Player.ini")).unwrap();
+        let mut doc = load(root.path(), Source::Game).unwrap();
+        edit(&mut doc, "/volume", "0.1");
+        edit(&mut doc, "Width", "invalid");
+        assert!(doc.save(root.path()).is_err());
+        assert_eq!(
+            fs::read(root.path().join("Database.tdb")).unwrap(),
+            before_db
+        );
+        assert_eq!(
+            fs::read(root.path().join("Bin/Player.ini")).unwrap(),
+            before_ini
+        );
+    }
+    #[test]
+    fn unedited_player_settings_do_not_overwrite_external_changes() {
+        let root = game_fixture();
+        let mut doc = load(root.path(), Source::Game).unwrap();
+        edit(&mut doc, "/volume", "0.4");
+        let path = root.path().join("Bin/Player.ini");
+        let external = "; externally updated\n[Graphics]\nWidth=1600\n";
+        fs::write(&path, external).unwrap();
+        doc.save(root.path()).unwrap();
+        assert_eq!(fs::read_to_string(path).unwrap(), external);
+    }
+    #[test]
+    fn original_player_does_not_expose_unused_ini_settings() {
+        let root = game_fixture();
+        fs::write(root.path().join("Bin/Player.exe"), vec![0u8; 155648]).unwrap();
+        let doc = load(root.path(), Source::Game).unwrap();
+        assert!(!doc.fields.iter().any(|f| f.key == "Width"));
     }
     #[test]
     fn ini_roundtrip_keeps_values() {

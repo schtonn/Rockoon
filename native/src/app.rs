@@ -94,8 +94,15 @@ pub enum TasAction {
     Range(usize, bool),
 }
 #[derive(Clone, Debug)]
+pub struct Startup {
+    instance: Option<Instance>,
+    preferences: Preferences,
+    problem: Option<String>,
+    protocol_ready: bool,
+}
+#[derive(Clone, Debug)]
 pub enum Message {
-    Startup(Result<(Option<Instance>, Preferences), String>),
+    Startup(Result<Startup, String>),
     PickFolder,
     FolderPicked(Option<PathBuf>),
     Loaded(Result<Instance, String>),
@@ -148,6 +155,7 @@ pub enum Message {
     SelectConfig(String),
     DocumentLoaded(u64, Result<(Document, Vec<PathBuf>), String>),
     Group(String),
+    ConfigSection(String),
     Field(usize, String),
     SaveDocument,
     ProfilesLoaded(u64, Result<Value, String>),
@@ -189,6 +197,9 @@ pub enum Message {
     TasOffset(usize),
     Event(iced::Event),
     RegisterProtocol,
+    ProtocolRegistered(Result<(), String>),
+    OpenHub,
+    HubOpened(Result<(), String>),
     AutoUpdate(Result<Option<crate::updates::Release>, String>),
     AutoPatches(Result<Vec<Patch>, String>),
     CheckUpdate,
@@ -261,6 +272,10 @@ pub struct App {
     update_path: Option<PathBuf>,
     page: Page,
     folder_menu: bool,
+    setup_problem: Option<String>,
+    protocol_ready: bool,
+    opening_hub: bool,
+    config_sections: std::collections::HashMap<String, bool>,
     instance: Option<Instance>,
     preferences: Preferences,
     busy: bool,
@@ -331,6 +346,10 @@ impl App {
             update_path: None,
             page: Page::Home,
             folder_menu: std::env::args().any(|a| a == "--folder-menu"),
+            setup_problem: None,
+            protocol_ready: false,
+            opening_hub: false,
+            config_sections: std::collections::HashMap::new(),
             instance: None,
             preferences: Preferences::default(),
             busy: true,
@@ -350,7 +369,7 @@ impl App {
             asset_kind: Kind::Skies,
             document: None,
             config_files: vec![],
-            config_name: "游戏选项".into(),
+            config_name: "游戏设置".into(),
             group: String::new(),
             profile_index: json!({"profiles":[],"currentId":""}),
             patches: vec![],
@@ -393,11 +412,20 @@ impl App {
                         prefs.playtime = stats.total;
                         prefs.last_played = stats.last;
                     }
-                    let instance = requested
+                    let (instance, problem) = match requested
                         .or_else(|| prefs.instance_path.clone())
                         .map(game::discover)
-                        .transpose()?;
-                    Ok((instance, prefs))
+                        .transpose()
+                    {
+                        Ok(instance) => (instance, None),
+                        Err(error) => (None, Some(format!("之前的游戏目录无法使用：{error}"))),
+                    };
+                    Ok(Startup {
+                        instance,
+                        preferences: prefs,
+                        problem,
+                        protocol_ready: crate::system::protocol_registered(),
+                    })
                 }),
                 Message::Startup,
             ),
@@ -475,10 +503,11 @@ impl App {
             Page::Config | Page::Data => {
                 if let Some(root) = self.root() {
                     self.busy = true;
+                    self.document = None;
                     let source = if self.page == Page::Data {
                         Source::Data
-                    } else if self.config_name == "游戏选项" {
-                        Source::Options
+                    } else if self.config_name == "游戏设置" {
+                        Source::Game
                     } else {
                         Source::File(
                             self.config_files
@@ -509,8 +538,13 @@ impl App {
             }
             Page::Settings => return Task::perform(background(preferences::stats), Message::Stats),
             Page::Install => {
-                self.busy = true;
                 let root = self.root();
+                if root.is_none() {
+                    self.busy = false;
+                    self.patches.clear();
+                    return Task::none();
+                }
+                self.busy = true;
                 return Task::perform(
                     background(move || jobs::for_instance(root.as_deref())),
                     move |r| Message::Patches(revision, r),
@@ -600,10 +634,12 @@ impl App {
             Message::Startup(result) => {
                 self.busy = false;
                 match result {
-                    Ok((instance, prefs)) => {
-                        self.instance = instance;
-                        crate::l10n::set(&prefs.language);
-                        self.preferences = prefs;
+                    Ok(startup) => {
+                        self.instance = startup.instance;
+                        self.setup_problem = startup.problem;
+                        self.protocol_ready = startup.protocol_ready;
+                        crate::l10n::set(&startup.preferences.language);
+                        self.preferences = startup.preferences;
                         let args: Vec<_> = std::env::args().skip(1).collect();
                         if self.detached_tas {
                             self.page = Page::Tas;
@@ -642,7 +678,7 @@ impl App {
                                     self.import_url = url;
                                     self.page = Page::Tasks;
                                 }
-                                Err(e) => self.error(e),
+                                Err(e) => self.setup_problem = Some(e),
                             }
                         } else if let Some(path) =
                             args.iter().map(PathBuf::from).find(|p| p.is_file())
@@ -661,7 +697,7 @@ impl App {
                         }
                         return Task::batch(checks);
                     }
-                    Err(e) => self.error(e),
+                    Err(e) => self.setup_problem = Some(e),
                 }
             }
             Message::PickFolder if !self.locked() && !self.picking_folder => {
@@ -701,13 +737,19 @@ impl App {
                     Ok(instance) => {
                         self.preferences.instance_path = Some(instance.root.clone());
                         self.instance = Some(instance);
+                        self.setup_problem = None;
                         self.document = None;
                         self.directory = PathBuf::new();
                         self.deleted = None;
-                        self.config_name = "游戏选项".into();
+                        self.config_name = "游戏设置".into();
                         return Task::batch([self.save_preferences(), self.reload()]);
                     }
-                    Err(e) => self.error(e),
+                    Err(e) => {
+                        if self.instance.is_none() {
+                            self.setup_problem = Some(e.clone());
+                        }
+                        self.error(e);
+                    }
                 }
             }
             Message::Rescanned(root, result) => {
@@ -1206,6 +1248,7 @@ impl App {
             Message::FoundConfig(result) => match result {
                 Ok(path) => {
                     self.page = Page::Config;
+                    self.search.clear();
                     self.config_name = path
                         .file_name()
                         .unwrap_or_default()
@@ -1227,6 +1270,9 @@ impl App {
                 }
             }
             Message::SelectConfig(name) => {
+                if name == self.config_name {
+                    return Task::none();
+                }
                 if self.document.as_ref().is_some_and(|d| d.dirty) {
                     self.prompt = Some(Prompt {
                         title: "放弃尚未保存的配置？".into(),
@@ -1236,6 +1282,7 @@ impl App {
                     return Task::none();
                 }
                 self.config_name = name;
+                self.search.clear();
                 return self.reload();
             }
             Message::DocumentLoaded(revision, result) => {
@@ -1253,6 +1300,14 @@ impl App {
                 }
             }
             Message::Group(group) => self.group = group,
+            Message::ConfigSection(group) => {
+                let key = format!("{}:{group}", self.config_name);
+                let open = self
+                    .config_sections
+                    .entry(key)
+                    .or_insert(!matches!(group.as_str(), "键位与相机" | "高级"));
+                *open = !*open;
+            }
             Message::Field(i, value) => {
                 if self.locked() {
                     return Task::none();
@@ -1361,7 +1416,7 @@ impl App {
                 });
             }
             Message::InstallChoice(player, bmlplus) => {
-                self.install_player = player;
+                self.install_player = player || bmlplus;
                 self.install_bmlplus = bmlplus;
             }
             Message::Sky(sky) => self.sky = sky,
@@ -1851,7 +1906,33 @@ impl App {
                 }
             }
             Message::RegisterProtocol => {
-                return Task::perform(background(crate::system::register_protocol), Message::Saved);
+                return Task::perform(
+                    background(crate::system::register_protocol),
+                    Message::ProtocolRegistered,
+                );
+            }
+            Message::ProtocolRegistered(result) => match result {
+                Ok(()) => {
+                    self.protocol_ready = true;
+                    self.notify("已启用一键安装，可在资源站选择资源并点击“一键安装”");
+                }
+                Err(error) => self.error(error),
+            },
+            Message::OpenHub if !self.opening_hub => {
+                self.opening_hub = true;
+                return Task::perform(
+                    background(|| {
+                        jobs::hub("/packages?limit=1")?;
+                        game::open_folder(&PathBuf::from(jobs::origin()))
+                    }),
+                    Message::HubOpened,
+                );
+            }
+            Message::HubOpened(result) => {
+                self.opening_hub = false;
+                if let Err(error) = result {
+                    self.error(error);
+                }
             }
             Message::AutoUpdate(Ok(Some(release))) => {
                 self.notify(format!("有新的原生版本：{}", release.version));

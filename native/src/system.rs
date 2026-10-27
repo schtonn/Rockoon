@@ -117,6 +117,66 @@ pub fn messages() -> Vec<Vec<String>> {
         .map(|mut q| std::mem::take(&mut *q))
         .unwrap_or_default()
 }
+/// Read-only check: opening the launcher never claims another installation's protocol handler.
+pub fn protocol_registered() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::System::Registry::{
+            HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW,
+        };
+        let key: Vec<u16> = r"Software\Classes\rockoon\shell\open\command"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let mut size = 0;
+        let result = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                std::ptr::null(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut size,
+            )
+        };
+        if result != 0 || size == 0 || size > 65536 {
+            return false;
+        }
+        let mut value = vec![0u16; size as usize / 2 + 1];
+        let result = unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                key.as_ptr(),
+                std::ptr::null(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                value.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        let Ok(executable) = std::env::current_exe() else {
+            return false;
+        };
+        let actual = String::from_utf16_lossy(
+            &value[..value.iter().position(|c| *c == 0).unwrap_or(value.len())],
+        );
+        result == 0 && actual.eq_ignore_ascii_case(&format!("\"{}\" \"%1\"", executable.display()))
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.ancestors().nth(2).map(|p| p.join("Info.plist")))
+            .and_then(|p| fs::read_to_string(p).ok())
+            .is_some_and(|s| s.contains("rockoon"))
+    }
+    #[cfg(all(not(windows), not(target_os = "macos")))]
+    {
+        false
+    }
+}
+
 pub fn register_protocol() -> Result<(), String> {
     #[cfg(windows)]
     {

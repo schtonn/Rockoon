@@ -23,6 +23,52 @@ static WORDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
         serde_json::from_str(include_str!("../../src/i18n/languages/en.json")).unwrap_or_default();
     visit(&zh, &en, &mut map);
     for (zh, en) in [
+        ("选择 Ballance", "Choose Ballance"),
+        (
+            "选择已有的游戏文件夹，或安装一份游戏。",
+            "Choose an existing game folder, or install a copy.",
+        ),
+        ("选择已有游戏", "Choose existing game"),
+        ("下载并安装", "Download and install"),
+        ("游戏设置", "Game settings"),
+        ("分辨率", "Resolution"),
+        ("音量", "Volume"),
+        ("画面", "Graphics"),
+        ("声音", "Audio"),
+        ("键位与相机", "Keys and camera"),
+        ("高级", "Advanced"),
+        ("社区资源站 ↗", "Community resources ↗"),
+        ("正在连接…", "Connecting…"),
+        ("这里还没有资源", "No resources here yet"),
+        ("没有匹配的资源", "No matching resources"),
+        (
+            "可以导入本地文件，或打开社区资源站下载。",
+            "Import local files, or download from the community site.",
+        ),
+        (
+            "在社区资源站点击“一键安装”，也可以导入本地文件。",
+            "Use one-click install on the community site, or import local files.",
+        ),
+        ("启用一键安装", "Enable one-click install"),
+        ("重新关联一键安装", "Relink one-click install"),
+        (
+            "使用自制地图和模组需要 BML / BML+。",
+            "Custom maps and mods require BML / BML+.",
+        ),
+        ("安装支持", "Install support"),
+        (
+            "安装到新的空文件夹，完成后即可启动游戏。",
+            "Install into a new empty folder. You can play when installation finishes.",
+        ),
+        ("兼容增强（NewPlayer）", "Compatibility (NewPlayer)"),
+        ("模组与地图（BML+）", "Mods and maps (BML+)"),
+        ("进入游戏", "Go to game"),
+        ("查看资源", "View resources"),
+        ("没有匹配的配置项", "No matching settings"),
+        (
+            "无法读取配置，请重新读取或选择其他配置。",
+            "Unable to read settings. Reload or choose another configuration.",
+        ),
         ("资源", "Resources"),
         ("下载", "Downloads"),
         ("参数", "Options"),
