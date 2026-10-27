@@ -261,6 +261,7 @@ impl Notice {
     }
 }
 pub struct App {
+    home_active: bool,
     detached_tas: bool,
     tas_level: u8,
     tas_fps: String,
@@ -335,6 +336,7 @@ async fn background<T: Send + 'static>(
 impl App {
     pub fn new() -> (Self, Task<Message>) {
         let state = Self {
+            home_active: true,
             detached_tas: std::env::args().any(|a| a == "--tas-editor"),
             tas_level: 1,
             tas_fps: "240".into(),
@@ -1619,9 +1621,11 @@ impl App {
                 }
             }
             Message::Hide(Some(id)) => {
+                self.home_active = false;
                 return iced::window::set_mode(id, iced::window::Mode::Hidden);
             }
             Message::Show(Some(id)) => {
+                self.home_active = true;
                 return iced::window::set_mode(id, iced::window::Mode::Windowed)
                     .chain(iced::window::gain_focus(id));
             }
@@ -2075,6 +2079,12 @@ impl App {
                     ),
                 ])
                 .chain(iced::exit());
+            }
+            Message::Event(iced::Event::Window(iced::window::Event::Focused)) => {
+                self.home_active = true;
+            }
+            Message::Event(iced::Event::Window(iced::window::Event::Unfocused)) => {
+                self.home_active = false;
             }
             Message::Event(iced::Event::Window(iced::window::Event::Resized(_))) => {
                 if self.tas_embedded

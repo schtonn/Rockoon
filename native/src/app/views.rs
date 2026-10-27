@@ -454,10 +454,19 @@ impl App {
                 .height(Fill);
         if let Some(sky) = self.instance.as_ref().and_then(|i| i.visuals.sky.as_ref()) {
             stack![
-                image(sky.clone())
-                    .width(Fill)
-                    .height(Fill)
-                    .content_fit(iced::ContentFit::Fill),
+                self.instance
+                    .as_ref()
+                    .and_then(|i| i.visuals.balls.clone())
+                    .map(|balls| crate::home_balls::view(
+                        balls,
+                        sky.clone(),
+                        self.home_active && !self.launching && self.running.is_none()
+                    ))
+                    .unwrap_or_else(|| image(sky.clone())
+                        .width(Fill)
+                        .height(Fill)
+                        .content_fit(iced::ContentFit::Fill)
+                        .into()),
                 foreground
             ]
             .width(Fill)

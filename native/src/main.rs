@@ -5,6 +5,7 @@ mod assets;
 mod bounds;
 mod config;
 mod game;
+mod home_balls;
 mod jobs;
 mod keys;
 mod l10n;

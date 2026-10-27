@@ -5,6 +5,7 @@ use std::{collections::HashMap, path::Path};
 #[derive(Clone, Debug, Default)]
 pub struct GameAssets {
     pub sky: Option<image::Handle>,
+    pub balls: Option<std::sync::Arc<crate::home_balls::Assets>>,
     pub selected_button: Option<image::Handle>,
     pub normal_button: Option<image::Handle>,
     pub captions: HashMap<&'static str, Caption>,
@@ -15,6 +16,7 @@ impl GameAssets {
         let textures = root.join("Textures");
         Self {
             captions: captions(&textures.join("Font_1.tga")),
+            balls: crate::home_balls::Assets::load(root),
             sky: decode(&textures.join("Sky/Sky_A_Front.bmp"), None),
             selected_button: decode(&textures.join("Button01_select.tga"), Some((256, 256))),
             normal_button: decode(&textures.join("Button01_deselect.tga"), Some((256, 256))),
