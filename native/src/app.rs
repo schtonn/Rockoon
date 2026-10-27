@@ -104,7 +104,6 @@ pub enum Message {
     FolderMenu,
     CloseMenus,
     NoticeTick,
-    LaunchHover(bool),
     LatestVersion,
     Search(String),
     Refresh,
@@ -240,12 +239,13 @@ impl Notice {
         }
     }
     fn opacity(&self) -> f32 {
-        (self
-            .duration
-            .saturating_sub(self.since.elapsed())
-            .as_secs_f32()
-            / 0.3)
-            .min(1.0)
+        (self.since.elapsed().as_secs_f32() / 0.16).min(1.0)
+            * (self
+                .duration
+                .saturating_sub(self.since.elapsed())
+                .as_secs_f32()
+                / 0.3)
+                .min(1.0)
     }
 }
 pub struct App {
@@ -273,7 +273,6 @@ pub struct App {
     session: Option<Instant>,
     search: String,
     notice: Option<Notice>,
-    launch_hover: bool,
     version_menu: Option<usize>,
     entries: Vec<Entry>,
     directory: PathBuf,
@@ -344,7 +343,6 @@ impl App {
             session: None,
             search: String::new(),
             notice: None,
-            launch_hover: false,
             version_menu: None,
             entries: vec![],
             directory: PathBuf::new(),
@@ -589,7 +587,6 @@ impl App {
         }
         match message {
             Message::CloseMenus => self.close_menus(),
-            Message::LaunchHover(value) => self.launch_hover = value,
             Message::NoticeTick => {
                 if self
                     .notice

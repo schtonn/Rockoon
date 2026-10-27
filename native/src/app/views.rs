@@ -2,10 +2,43 @@ use super::*;
 use iced::{
     Alignment, Fill,
     widget::{
-        button, checkbox, column, container, image, opaque, pick_list, progress_bar, row, rule,
-        scrollable, space, stack, text, text_input,
+        button, column, container, image, opaque, progress_bar, row, rule, space, stack, text,
     },
 };
+fn text_input<'a>(placeholder: &str, value: &str) -> iced::widget::TextInput<'a, Message> {
+    iced::widget::text_input(placeholder, value)
+        .size(14)
+        .padding(9)
+        .style(style::input)
+}
+fn checkbox<'a>(checked: bool) -> iced::widget::Checkbox<'a, Message> {
+    iced::widget::checkbox(checked)
+        .size(18)
+        .spacing(9)
+        .text_size(14)
+        .style(style::check)
+}
+fn pick_list<'a, T, L, V>(
+    options: L,
+    selected: Option<V>,
+    on_selected: impl Fn(T) -> Message + 'a,
+) -> iced::widget::PickList<'a, T, L, V, Message>
+where
+    T: ToString + PartialEq + Clone + 'a,
+    L: std::borrow::Borrow<[T]> + 'a,
+    V: std::borrow::Borrow<T> + 'a,
+{
+    iced::widget::pick_list(options, selected, on_selected)
+        .text_size(14)
+        .padding(9)
+        .style(style::select)
+        .menu_style(style::select_menu)
+}
+fn scrollable<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> iced::widget::Scrollable<'a, Message> {
+    iced::widget::scrollable(content).style(style::scroll)
+}
 fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
     button(text(crate::l10n::text(label)).size(14))
         .padding([8, 12])
@@ -220,11 +253,13 @@ impl App {
                         iced::widget::slider(-180.0..=180.0, self.sky_yaw, |v| Message::SkyAngle(
                             true, v
                         ))
+                        .style(style::range)
                         .on_release(Message::SkyRender),
                         text(crate::l10n::text("俯仰")).size(14),
                         iced::widget::slider(-80.0..=80.0, self.sky_pitch, |v| Message::SkyAngle(
                             false, v
                         ))
+                        .style(style::range)
                         .on_release(Message::SkyRender),
                     ]
                     .spacing(14)
@@ -346,39 +381,50 @@ impl App {
         } else if self.running.is_some() {
             ("结束游戏", Message::Stop)
         } else if self.instance.is_some() {
-            ("启动游戏", Message::Launch(None))
+            ("START", Message::Launch(None))
         } else {
             ("选择游戏目录", Message::PickFolder)
         };
-        let action: Element<'_, Message> = if let Some(atlas) = self
+        let action: Element<'_, Message> = if let Some(visuals) = self
             .instance
             .as_ref()
-            .and_then(|i| i.visuals.launch_button(self.launch_hover && enabled))
+            .map(|i| &i.visuals)
+            .filter(|v| v.launch_button(false).is_some())
         {
-            let skin = image(atlas.clone())
-                .width(256)
-                .height(64)
-                .opacity(if enabled { 1.0_f32 } else { 0.5_f32 });
-            let caption = container(
+            let opacity = if enabled { 1.0 } else { 0.5 };
+            let caption: Element<'_, Message> = if label == "START" {
+                if let Some(start) = &visuals.start {
+                    image(start.clone())
+                        .width(132)
+                        .height(20)
+                        .opacity(opacity)
+                        .into()
+                } else {
+                    text("START")
+                        .size(20)
+                        .color(iced::Color::WHITE.scale_alpha(opacity))
+                        .into()
+                }
+            } else {
                 text(crate::l10n::text(label))
                     .size(16)
-                    .color(iced::Color::WHITE),
+                    .color(iced::Color::WHITE.scale_alpha(opacity))
+                    .into()
+            };
+            let caption = container(caption)
+                .padding(iced::Padding {
+                    left: 42.0,
+                    ..iced::Padding::ZERO
+                })
+                .center_x(Fill)
+                .center_y(Fill);
+            crate::launch::button(
+                visuals.launch_button(false).unwrap().clone(),
+                visuals.launch_button(true).unwrap().clone(),
+                caption.into(),
+                enabled,
+                message,
             )
-            .padding(iced::Padding {
-                left: 42.0,
-                ..iced::Padding::ZERO
-            })
-            .center_x(Fill)
-            .center_y(Fill);
-            iced::widget::mouse_area(
-                button(stack![skin, caption].width(256).height(64).clip(true))
-                    .padding(0)
-                    .style(style::original_button)
-                    .on_press_maybe(enabled.then_some(message)),
-            )
-            .on_enter(Message::LaunchHover(true))
-            .on_exit(Message::LaunchHover(false))
-            .into()
         } else {
             button(text(crate::l10n::text(label)).size(15))
                 .padding([14, 28])
@@ -1193,8 +1239,8 @@ impl App {
             tracks = tracks.push(track);
         }
         let timeline = scrollable(tracks)
-            .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new(),
+            .direction(iced::widget::scrollable::Direction::Horizontal(
+                iced::widget::scrollable::Scrollbar::new(),
             ))
             .height(280);
         let stats = row![

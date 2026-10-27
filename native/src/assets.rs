@@ -7,12 +7,14 @@ pub struct GameAssets {
     pub sky: Option<image::Handle>,
     pub selected_button: Option<image::Handle>,
     pub normal_button: Option<image::Handle>,
+    pub start: Option<image::Handle>,
 }
 
 impl GameAssets {
     pub fn load(root: &Path) -> Self {
         let textures = root.join("Textures");
         Self {
+            start: start_caption(&textures.join("Font_1.tga")),
             sky: decode(&textures.join("Sky/Sky_A_Front.bmp"), None),
             selected_button: decode(&textures.join("Button01_select.tga"), Some((256, 256))),
             normal_button: decode(&textures.join("Button01_deselect.tga"), Some((256, 256))),
@@ -30,6 +32,44 @@ impl GameAssets {
                 .or(self.selected_button.as_ref())
         }
     }
+}
+
+/// The game's bitmap font is a 16 by 16 ASCII atlas with 32px cells.
+/// Trim transparent side bearings and keep each glyph's original pixels and baseline.
+fn start_caption(path: &Path) -> Option<image::Handle> {
+    let atlas = bitmap::ImageReader::open(path)
+        .ok()?
+        .decode()
+        .ok()?
+        .into_rgba8();
+    if atlas.dimensions() != (512, 512) {
+        return None;
+    }
+    let mut glyphs = Vec::new();
+    for code in b"START" {
+        let x = u32::from(code % 16) * 32;
+        let y = u32::from(code / 16) * 32;
+        let columns: Vec<_> = (0..32)
+            .filter(|col| (0..32).any(|row| atlas.get_pixel(x + col, y + row)[3] != 0))
+            .collect();
+        let left = *columns.first()?;
+        let right = *columns.last()? + 1;
+        glyphs.push(bitmap::imageops::crop_imm(&atlas, x + left, y, right - left, 32).to_image());
+    }
+    let width = glyphs.iter().map(bitmap::RgbaImage::width).sum::<u32>() + 8;
+    let mut caption = bitmap::RgbaImage::new(width, 32);
+    let mut x = 0;
+    for glyph in glyphs {
+        bitmap::imageops::replace(&mut caption, &glyph, x, 0);
+        x += i64::from(glyph.width()) + 2;
+    }
+    let rows: Vec<_> = (0..32)
+        .filter(|y| (0..width).any(|x| caption.get_pixel(x, *y)[3] != 0))
+        .collect();
+    let top = *rows.first()?;
+    let height = *rows.last()? + 1 - top;
+    let pixels = bitmap::imageops::crop_imm(&caption, 0, top, width, height).to_image();
+    Some(image::Handle::from_rgba(width, height, pixels.into_raw()))
 }
 
 /// Keep source pixels unchanged, extracting the button's exact atlas rectangle before upload.

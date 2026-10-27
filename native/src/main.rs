@@ -8,6 +8,7 @@ mod game;
 mod jobs;
 mod keys;
 mod l10n;
+mod launch;
 mod media;
 mod popup;
 mod preferences;
