@@ -37,6 +37,7 @@ impl App {
             .padding([24, 18])
             .width(164)
             .height(Fill)
+            .clip(true)
             .style(style::sidebar);
         let mut header = column![self.header()].spacing(12);
         if let Some(notice) = &self.notice {
