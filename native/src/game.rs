@@ -16,6 +16,7 @@ pub struct Resource {
 
 #[derive(Clone, Debug)]
 pub struct Instance {
+    pub visuals: crate::assets::GameAssets,
     pub root: PathBuf,
     pub name: String,
     pub player: String,
@@ -47,6 +48,7 @@ pub fn discover(root: PathBuf) -> Result<Instance, String> {
         "原版"
     };
     Ok(Instance {
+        visuals: crate::assets::GameAssets::load(&root),
         name: root
             .file_name()
             .unwrap_or(root.as_os_str())

@@ -4,9 +4,10 @@ use crate::{
     style,
 };
 use iced::{
-    Alignment, Element, Fill, Length, Subscription, Task,
+    Alignment, Element, Fill, Subscription, Task,
     widget::{
-        button, column, container, row, rule, scrollable, space, svg, text, text_input, tooltip,
+        button, column, container, image, row, rule, scrollable, space, stack, text, text_input,
+        tooltip,
     },
 };
 use std::{path::PathBuf, time::Duration};
@@ -46,7 +47,6 @@ pub struct App {
     running: Option<RunningGame>,
     search: String,
     notice: Option<String>,
-    artwork: svg::Handle,
 }
 
 async fn background<T: Send + 'static>(
@@ -68,9 +68,6 @@ impl App {
             running: None,
             search: String::new(),
             notice: None,
-            artwork: svg::Handle::from_memory(
-                include_bytes!("../assets/cloud-track.svg").as_slice(),
-            ),
         };
         let requested = std::env::args_os().nth(1).map(PathBuf::from);
         let startup = Task::perform(
@@ -357,57 +354,92 @@ impl App {
         } else {
             "选择已安装的 Ballance 游戏目录".to_owned()
         };
-        let action: Element<'_, Message> = if self.instance.is_some() {
-            button(
-                text(if self.launching {
-                    "正在启动…"
-                } else if self.running.is_some() {
-                    "游戏运行中"
-                } else {
-                    "启动游戏  →"
-                })
-                .size(16),
-            )
-            .padding([15, 34])
-            .style(style::primary)
-            .on_press_maybe(
-                (!self.busy && !self.launching && self.running.is_none())
-                    .then_some(Message::Launch(None)),
-            )
-            .into()
+        let enabled = !self.busy && !self.launching && self.running.is_none();
+        let label = if self.launching {
+            "正在启动…"
+        } else if self.running.is_some() {
+            "游戏运行中"
         } else {
-            button(text("选择游戏目录  →").size(15))
-                .padding([15, 26])
+            "启动游戏"
+        };
+        let action: Element<'_, Message> = if let Some(atlas) = self
+            .instance
+            .as_ref()
+            .and_then(|instance| instance.visuals.launch_button())
+        {
+            let skin = image(atlas.clone())
+                .width(256)
+                .height(64)
+                .opacity(if enabled { 1.0_f32 } else { 0.5_f32 });
+            let caption = container(text(label).size(16).color(iced::Color::WHITE))
+                .padding(iced::Padding {
+                    left: 42.0,
+                    ..iced::Padding::ZERO
+                })
+                .center_x(Fill)
+                .center_y(Fill);
+            button(stack![skin, caption].width(256).height(64).clip(true))
+                .padding(0)
+                .style(style::original_button)
+                .on_press_maybe(enabled.then_some(Message::Launch(None)))
+                .into()
+        } else if self.instance.is_some() {
+            button(text(label).size(15))
+                .padding([14, 28])
+                .style(style::primary)
+                .on_press_maybe(enabled.then_some(Message::Launch(None)))
+                .into()
+        } else {
+            button(text("选择游戏目录").size(15))
+                .padding([14, 28])
                 .style(style::primary)
                 .on_press_maybe((!self.busy && !self.picking_folder).then_some(Message::PickFolder))
                 .into()
         };
-        column![
+
+        let sky = self
+            .instance
+            .as_ref()
+            .and_then(|instance| instance.visuals.sky.as_ref());
+        let foreground = container(
             column![
-                text("Ballance").size(46),
-                text(subtitle).size(13).color(style::MUTED)
+                column![
+                    text("Ballance").size(44).color(style::INK),
+                    text(subtitle).size(13).color(if sky.is_some() {
+                        iced::Color::WHITE
+                    } else {
+                        style::MUTED
+                    }),
+                ]
+                .spacing(8),
+                space::vertical(),
+                container(action)
+                    .align_x(iced::alignment::Horizontal::Right)
+                    .width(Fill),
             ]
-            .spacing(8),
-            container(svg(self.artwork.clone()).width(Fill).height(Length::Shrink))
-                .center_x(Fill)
-                .center_y(Fill),
-            rule::horizontal(1),
-            row![
-                text(if self.instance.is_some() {
-                    "木球 · 石球 · 纸球"
-                } else {
-                    "从云端出发"
-                })
-                .size(12)
-                .color(style::MUTED),
-                space::horizontal(),
-                action,
+            .height(Fill),
+        )
+        .padding(28)
+        .width(Fill)
+        .height(Fill);
+
+        if let Some(sky) = sky {
+            // Read the level-1 skybox bitmap directly from this installation.
+            // It is displayed as-is; no painted replacement scene or generated balls.
+            stack![
+                image(sky.clone())
+                    .width(Fill)
+                    .height(Fill)
+                    .content_fit(iced::ContentFit::Fill),
+                foreground,
             ]
-            .align_y(Alignment::Center),
-        ]
-        .spacing(20)
-        .height(Fill)
-        .into()
+            .width(Fill)
+            .height(Fill)
+            .clip(true)
+            .into()
+        } else {
+            foreground.into()
+        }
     }
 
     fn resources(&self, mods: bool) -> Element<'_, Message> {
