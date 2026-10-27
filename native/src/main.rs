@@ -2,18 +2,47 @@
 
 mod app;
 mod assets;
+mod bounds;
+mod config;
 mod game;
+mod jobs;
+mod keys;
+mod l10n;
+mod media;
 mod preferences;
+mod profiles;
+mod sky;
 mod style;
+mod system;
+mod tas;
+mod updates;
+mod vanilla;
+mod workspace;
 
 fn main() -> iced::Result {
+    let _instance = match system::start() {
+        Ok(Some(guard)) => Some(guard),
+        Ok(None) => return Ok(()),
+        Err(_) => None,
+    };
+    #[cfg(target_os = "macos")]
+    system::install_url_handler();
     iced::application(app::App::new, app::App::update, app::App::view)
-        .title("Rockoon")
+        .title(if std::env::args().any(|a| a == "--tas-editor") {
+            "Rockoon · TAS"
+        } else {
+            "Rockoon"
+        })
         .theme(style::theme())
         .subscription(app::App::subscription)
         .default_font(iced::Font::with_name("Microsoft YaHei UI"))
         .window(iced::window::Settings {
-            size: iced::Size::new(1040.0, 700.0),
+            size: if std::env::args().any(|a| a == "--tas-editor") {
+                iced::Size::new(1280.0, 960.0)
+            } else {
+                iced::Size::new(1040.0, 700.0)
+            },
+            exit_on_close_request: false,
             min_size: Some(iced::Size::new(840.0, 580.0)),
             ..iced::window::Settings::default()
         })

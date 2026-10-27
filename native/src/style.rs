@@ -84,3 +84,10 @@ pub fn notice(_: &Theme) -> container::Style {
         ..container::Style::default()
     }
 }
+
+pub fn shade(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Color::from_rgba8(0, 0, 0, 0.65).into()),
+        ..container::Style::default()
+    }
+}

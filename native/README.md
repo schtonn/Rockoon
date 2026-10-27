@@ -1,109 +1,123 @@
-# Rockoon 原生前端
+# Rockoon 原生桌面版
 
-这是正在迁移的 Windows 原生版本，使用 Rust + Iced 0.14 的 tiny-skia 软件渲染。
-这个入口不使用 Tauri、WebView、JavaScript 或 wgpu；无需 Node.js 或 WebView2 即可运行。
-旧版启动器仍在原目录中，功能迁移完成前独立维护。
+Rust + Iced 0.14，使用 tiny-skia 软件渲染。运行不依赖 Tauri、WebView2、JavaScript 或 wgpu。
+当前版本为 0.2.0；Windows 是本机验证平台，macOS 继续作为实验平台。
 
-## 运行
+## 界面
 
-安装 Rust stable（最低 1.88）和 Visual Studio C++ Build Tools 后，在仓库根目录运行：
+- 左侧统一使用 Ballance、地图、模组、素材、配置、存档、方案、安装、任务、设置等导航。
+- Ballance 页的原版天空纹理铺满内容区高度；游玩按钮直接使用游戏原版菜单图集。
+- 右上角文件夹图标展开“打开目录 / 更换目录”，后面显示当前游戏目录。
+- 资源行只显示主要操作，其余操作收在“···”中；设置使用分组选择，下载使用后台任务页。
+- TAS 在独立原生窗口中打开，通过启动器设置启用入口。
+- 没有辅助灰色小字、宣传卡片或重绘的游戏插画。
 
-```powershell
+## 已接入的功能
+
+| 功能 | 原生实现 |
+| --- | --- |
+| 启动与进程 | 游戏目录选择、验证与记忆，原生重复进程检查，启动/结束自己启动的游戏，隐藏/恢复窗口 |
+| 地图 | 目录浏览与面包屑、新建目录、导入、移动、重命名、删除与撤销，多关键词搜索，指定地图启动 |
+| 模组 | 导入、移动、删除与撤销，BMOD/BMODP/ZIP 启停，对应配置快捷入口 |
+| 游戏配置 | 原版 Database.tdb 选项、原版键位名称选择，以及已安装 NewPlayer 的 Player.ini 分组编辑 |
+| 存档 | 关卡解锁与全部解锁，按关卡编辑排行榜名字和分数，重置当前关卡排行榜 |
+| 模组配置 | CFG/INI 分组、搜索、布尔与数字/文本编辑；保留注释和未编辑内容 |
+| 配置方案 | 兼容 .rockoon/profiles.json；创建、切换、重命名、删除，保存模组启停与游戏/模组配置 |
+| 游戏和补丁 | 安装原版游戏，安装/更新 BML、BML+、两种 NewPlayer 构建，选择补丁历史版本；BML+ 自动补装 NewPlayer，禁用冲突加载器 |
+| 下载任务 | 后台进度、速度、去重、下载阶段取消、失败重试、清理完成记录；游戏安装失败可重试自己的安装目录 |
+| 资源包 | BRP/ZIP 校验与导入、拖放、HTTPS/rockoon://import 链接、资源依赖解析，按加载器选择模组产物 |
+| 天空/材质/音效 | 原版 BMP/TGA 预览，五面天空盒方向/俯仰预览，WAV 试听与停止，资源包天空目标关卡选择 |
+| 原版保护 | 启动前 NMO 差异提醒，按内置清单恢复原版关卡，保留自定义文件；正常启动的 TAS 自动播放提醒及关闭入口 |
+| RockoonIO | 地图启动或安装 BML+ 时自动安装缺失的内置模组；尊重已有 .disable 状态 |
+| TAS | 独立窗口、兼容原 .tas 压缩格式、时间轴按键编辑、范围操作、复制/剪切/粘贴、插入帧、撤销/重做、导入/导出；从头/起始帧回放、帧率控制和 Win32 owner 视窗嵌入 |
+| 启动器偏好 | 中英界面切换、启动隐藏、地图独立模式和槽位、MOTD、TAS 开关、共享游玩时长和最近游玩记录 |
+| 系统集成 | 原生单实例与参数转发、下载站协议注册、社区外部链接 |
+| 更新 | 检查此 fork 的原生发布包，统一任务下载并校验 GitHub 提供的 SHA-256；Windows 可安装后退出 |
+| macOS | 复用原版 Wine 运行时、前缀、Rosetta 与重试启动器逻辑，支持已有 Wine；构建流程提供通用 .app 和原 Wine 运行时 |
+
+上述对应基线为旧 release 提交 6160dad4a0cacdc44100322a6f9fe446c742466a，依据实际源码。
+外部资源站的上传、作者管理没有对应的旧版桌面内置页面，没有作为桌面功能重新实现。
+旧版实际保存一个当前游戏目录和多套配置方案，并非完整的多实例管理器。
+
+## 构建和运行
+
+Windows 安装 Rust stable（最低 1.88）和 Visual Studio C++ Build Tools：
+
+~~~powershell
 cargo run --manifest-path native/Cargo.toml
 cargo build --release --manifest-path native/Cargo.toml
-```
+~~~
 
-可执行文件位于 `native/target/release/rockoon-native.exe`，可以单独复制使用。
-也可以把游戏根目录作为第一个参数传入；这种方式不保存或替换上次选择：
+输出为 native/target/release/rockoon-native.exe，可以单独复制使用。
+命令行可传入游戏根目录，不改写已保存的目录选择：
 
-```powershell
+~~~powershell
 .\rockoon-native.exe "D:\Games\Ballance"
-```
+~~~
 
-## 本批迁移
+可直接打开页面或独立编辑器：
 
-- 游戏页：选择、验证、记住游戏目录。
-- 从 `Bin` 工作目录启动 `Player.exe`，原生查询进程，阻止已有游戏运行时重复启动。
-- 地图页：递归扫描已解压的 NMO/CMO 文件，支持中文、搜索与刷新。
-- 启动指定地图：要求实例中已启用 BML+ 和 `ModLoader/Mods/RockoonIO.bmodp`。
-- 模组页：浏览 BMOD/BMODP/ZIP，按既有 `.disable` 约定启停文件。
-  已有同名目标文件时拒绝覆盖，游戏运行时拒绝更改模组。
-- 独立的用户配置文件；不修改旧版 WebView 的 localStorage，不自动写游戏数据库。
-- 首页直接读取所选游戏目录中的天空盒和原版菜单按钮图集，不再附带重绘插画。
-- 图片缺失或损坏时保留纯色界面和普通按钮，不生成替代图。
-- 读取目录、启动游戏、保存配置等操作通过后台任务执行；
-  只有本程序启动的游戏在运行时才每秒检查一次进程状态。
+~~~powershell
+.\rockoon-native.exe "D:\Games\Ballance" --page=maps
+.\rockoon-native.exe "D:\Games\Ballance" --tas-editor project.tas
+~~~
 
-## 游戏素材来源
+ROCKOON_NATIVE_CONFIG_DIR 可指定配置目录，用于便携使用或隔离验收。
+独立 TAS 编辑器将偏好存入该目录的 tas-editor 子目录；游玩记录通过文件锁共享。
 
-素材从所选实例的以下文件读取，后台解码后由原生软件渲染器显示：
+macOS 构建参见 .github/workflows/native.yml：
+分别构建 Apple Silicon/Intel，使用 lipo 合并，复用 scripts/fetch-wine.mjs，
+以 Zig 编译原 src-launcher/launch.c，再执行 native/scripts/bundle-macos.py。
+运行本身无需 Node.js。Wine 运行时及原始许可证作为 .app 资源随包提供。
 
-- 背景：`Textures/Sky/Sky_A_Front.bmp`。
-- 主按钮：`Textures/Button01_select.tga`；缺失时尝试 `Button01_deselect.tga`。
-- 按钮使用游戏图集左上角的 256 × 64 像素区域，保留图集原有像素与透明度。
-- 安装目录中如果使用了替换纹理，启动器也会显示那份纹理；程序不修改游戏素材。
+## 素材与格式复用
 
-预览中的三个素材文件均从仓库既有下载来源的原版游戏包取得，并与
-`src-tauri/resources/vanilla/manifest.json` 中的 SHA-256 一致。
-程序不打包这些游戏文件，也不包含自动下载图片或重绘的回退图。
+首页从所选游戏目录读取：
 
-## 与旧版的功能对照
+- Textures/Sky/Sky_A_Front.bmp。
+- Textures/Button01_select.tga；缺失时尝试 Button01_deselect.tga。
+- 菜单按钮裁取图集左上角 256 × 64 像素，保留原始像素与透明度。
+- 图片缺失时使用纯色和普通按钮；不生成替代插画。游戏目录采用替换纹理时会显示该目录中的素材。
 
-对照基线为本仓库原有 release 提交 6160dad4a0cacdc44100322a6f9fe446c742466a。
-以下依据页面、服务和后端实际代码，而非只看旧 README 的功能介绍。
-当前原生版是基础可用的迁移版本，尚不能替代旧版的全部功能。
+预览使用的原版纹理已与 src-tauri/resources/vanilla/manifest.json 中的 SHA-256 对照。
+原版文件恢复直接复用仓库已有 vanilla-core.zip 和清单，仅覆盖清单中 3D Entities 下的 NMO。
+替换前保留备份，额外文件不删除。
 
-| 功能 | 原生版现状与缺口 | 旧版代码依据 |
-| --- | --- | --- |
-| 游戏目录 | 已有选择、验证、记住目录、在资源管理器打开；未读取旧版保存的设置 | [app.rs](src/app.rs)、[旧存储结构](../src/types/store.d.ts) |
-| 游戏启动与进程 | 已有启动及防止重复运行；缺少停止游戏、启动后隐藏和结束后显示窗口、累计时长和最近游玩记录 | [launcher.ts](../src/services/launcher.ts) |
-| 指定地图启动 | 部分支持；要求预先安装 BML+ 和 RockoonIO，缺少自动安装 RockoonIO、地图模式/关卡槽位选择和 TAS 自动播放提醒。目前固定 ROCKOON_MAP_ONLY=1、ROCKOON_LEVEL_SLOT=0 | [launcher.ts](../src/services/launcher.ts)、[app.ts](../src/stores/app.ts)、[instance.ts](../src/backend/instance.ts) |
-| 地图管理 | 已有递归列表、简单搜索、刷新和启动；缺少导入、目录浏览/面包屑、新建目录、移动、删除。搜索尚未实现旧版的去扩展名、多关键词匹配 | [ResourcesMaps.tsx](../src/views/ResourcesMaps.tsx)、[search.ts](../src/utils/search.ts) |
-| 模组管理 | 已有列表、简单搜索、刷新、启停；缺少导入、删除和跳转对应配置文件 | [ResourcesPageBase.tsx](../src/views/ResourcesPageBase.tsx) |
-| 游戏设置 | 未迁移：分辨率、窗口/全屏、音量、垂直同步、按键、相机、云层等，以及 NewPlayer 的语言、跳过开场、帧率/宽屏解锁等设置 | [GameConfig.tsx](../src/views/GameConfig.tsx) |
-| 游戏存档 | 未迁移：关卡解锁、排行榜玩家名和分数编辑、重置 | [GameData.tsx](../src/views/GameData.tsx) |
-| 模组配置 | 未迁移：CFG/INI 配置搜索、按类型编辑、保存和打开配置目录 | [ModConfigs.tsx](../src/views/ModConfigs.tsx) |
-| 配置方案 | 未迁移：创建、重命名、切换、删除游戏及模组配置方案 | [profiles.ts](../src/stores/profiles.ts) |
-| 游戏与补丁安装 | 未迁移：下载原版游戏，安装/更新 BML、BML+、NewPlayer，检查依赖与安装记录 | [Patches.tsx](../src/views/Patches.tsx)、[game.ts](../src/services/game.ts)、[patches.ts](../src/services/patches.ts) |
-| 资源包导入 | 未迁移：BRP/ZIP 文件选择和拖放、rockoon://import 深链、依赖解析、模组版本兼容处理及天空盒目标关卡选择 | [resourceImport.ts](../src/services/resourceImport.ts)、[brp.ts](../src/services/brp.ts)、[deepLinkImport.ts](../src/services/deepLinkImport.ts) |
-| 下载任务 | 未迁移：统一任务列表、进度/速度、可取消任务的取消、失败重试和清理已完成项 | [downloads.ts](../src/stores/downloads.ts)、[Downloads.tsx](../src/views/Downloads.tsx) |
-| 天空盒管理 | 未迁移：按关卡分组、缩略图/天空盒预览、导入和目标关卡选择；首页显示天空背景不等于资源管理 | [ResourcesSkys.tsx](../src/views/ResourcesSkys.tsx) |
-| 材质管理 | 未迁移：BMP/TGA 浏览、预览和导入；首页读取菜单图片不等于材质管理 | [ResourcesTextures.tsx](../src/views/ResourcesTextures.tsx) |
-| 音效管理 | 未迁移：WAV 列表、播放/停止和导入 | [ResourcesSounds.tsx](../src/views/ResourcesSounds.tsx) |
-| 原版文件检查/恢复 | 未迁移：启动前 NMO 校验及差异提醒、原版素材恢复；旧版恢复会保留额外文件 | [vanilla.rs](../src-tauri/src/commands/vanilla.rs)、[Patches.tsx](../src/views/Patches.tsx) |
-| TAS | 未迁移：独立编辑器、时间轴编辑/导入导出/撤销重做、游戏窗口嵌入与回放速度控制。旧版为 Windows 可选实验功能 | [TasEditorWindow.tsx](../src/views/tas/TasEditorWindow.tsx)、[tasWindow.ts](../src/services/tasWindow.ts) |
-| 启动器偏好 | 目前只保存游戏目录；缺少中英切换、启动行为、地图启动模式/槽位、游戏内 MOTD 等。主题/背景效果属于简化设计中主动省去的外观功能 | [Settings.tsx](../src/views/Settings.tsx)、[store.d.ts](../src/types/store.d.ts) |
-| 自动更新 | 未迁移：版本检查、更新说明、下载及安装；原生版没有沿用上游更新端点 | [updater.ts](../src/services/updater.ts) |
-| 系统集成与平台 | 缺少启动器单实例唤起、协议注册与处理，以及 macOS 实验性 Wine 安装/配置/运行支持；当前原生版面向 Windows | [lib.rs](../src-tauri/src/lib.rs)、[wine.ts](../src/services/wine.ts) |
-| 社区入口 | 未迁移：百科、制图手册、论坛、下载站等外部链接 | [menu.ts](../src/routers/menu.ts) |
+内置 RockoonIO.bmodp 来自官方 [Rockoon 2.7.1 Windows 安装包](https://github.com/Ghomist/Rockoon/releases/tag/rockoon-v2.7.1)，
+未执行安装程序，仅提取原有资源；64,000 字节，SHA-256：
+1454de9b2bf6723b3eacedc41a6c03760b2c60fd76209e372af305685282424a。
+源码仍在 src-bmodp/，更新模组时应一起核对来源和哈希。
 
-### 对照边界
+native/core 直接编译旧版纯 Rust TDB/BRP/输入修复源码。
+native/platform 的构建脚本仅适配原有 Win32/Wine 命令的宏、句柄与路径接口，不引入 Tauri。
+原始后端和旧前端仍保留。
 
-- 旧 README 的“多实例”与实际数据模型不完全一致：代码保存一个当前游戏目录，另有多套配置方案。原生版缺少的是配置方案管理，不能直接描述为删除了完整的多实例管理器。
-- 旧 README 提到的资源上传、作者管理没有对应的桌面内置页面；外部资源站能力不计为本次删除的桌面功能。
-- 旧版存在“退出启动器时结束游戏”的偏好字段，但未找到执行它的逻辑，因此没有计入已实现功能。
-- 删除灰色辅助小字、冗余标题、轮播文案和装饰效果是界面简化，不等于上述业务功能已经迁移。
-- 游戏页不再显示“开始”入口或标题；点击左上角 ROCKOON 返回游戏页。
+## 写入与兼容边界
 
-### 建议迁移顺序
-
-1. 游戏/补丁安装、RockoonIO 自动安装、BRP 导入和下载任务：先补齐从安装到游玩的完整流程。
-2. 游戏设置、模组配置和配置方案：补齐日常调整能力。
-3. 地图/模组完整管理、天空盒/材质/音效管理、存档编辑与原版恢复。
-4. 自动更新及系统集成；TAS 与 macOS Wine 作为独立迁移项目。
+- 修改游戏文件前检查 Player.exe；结束游戏只针对本窗口持有的进程。
+- 文件替换先保留 .rockoon/backups 备份；批量写入失败会回退。删除使用 .rockoon/trash，可撤销本次删除。
+- 拒绝路径越界、符号链接/目录联接、压缩包重复路径和超出限制的解压内容。
+- TDB 修改保留其他表、未编辑选项和最新进度；配置文件如被其他操作修改，会拒绝覆盖并要求重新读取。
+- 旧版 WebView 的 localStorage 不会自动读取；已有游戏文件、补丁版本记录和配置方案可直接读取。
+- 原版 Player 不读取 Player.ini；该入口仅在检测到 NewPlayer 时出现。
+- TAS 回放要求安装 BallanceTAS 2.x，生成配置后再使用；临时改动在游戏退出后恢复，崩溃后的恢复记录会保留到下次正常启动。
+- TAS 已覆盖上述功能，交互为原生实现；旧编辑器的全部绘制和手势细节不逐一复制。
+- 原生自更新仅识别此 fork 的 native-v* 发布与固定产物名，拒绝上游 Tauri 安装包。首次发布原生产物前不会有可用更新。
+- macOS 继续实验性维护，需要实机验证 Wine、Rosetta、URL 事件及游戏窗口表现；TAS 嵌入/回放只在 Windows 提供。
+- 不恢复旧版装饰背景、轮播或辅助说明文案。
 
 ## 验证
 
-```powershell
+~~~powershell
 cargo fmt --manifest-path native/Cargo.toml --check
 cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path native/Cargo.toml
-```
+cargo test --manifest-path native/Cargo.toml --workspace
+cargo test --manifest-path native/Cargo.toml official_game_download_and_archive_validation -- --ignored --nocapture
+~~~
 
-测试覆盖目录校验、中文/嵌套/大小写资源扫描、模组启停无损、
-同名冲突拒绝覆盖、实例外路径拒绝、启动工作目录和中文地图环境变量。CI 的原生工作流单独构建并提供 Windows EXE，
-不创建应用 release。
+普通检查覆盖格式兼容、真实原版数据库保真、配置方案切换、文件备份/回退、
+中文路径与模组启停、BRP 模组产物选择、天空目标关卡、TAS 格式与编辑历史。
+最后一项会实际下载官方游戏包，仅验证网络与压缩包内容，不安装或运行游戏。
 
-源码分为 `app.rs`（界面与任务状态）、`game.rs`（实例与进程/资源操作）、
-`preferences.rs`（原子配置保存）、`style.rs`（颜色与控件样式）。
-后续先把原 Rust 解析和安装模块抽为无 Tauri 依赖的共享核心，再接到此界面。
+Windows CI 跳过继承的 Explorer 桌面进程测试，其余测试照常执行。
+工作流只上传构建产物，不创建应用 release，也不会替换 release 分支的旧版发布流程。

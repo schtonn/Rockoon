@@ -1,15 +1,19 @@
 use std::{
     fs,
     path::{Path, PathBuf},
-    process::{Child, Command},
+    process::Command,
     sync::{Arc, Mutex},
 };
 
-pub type RunningGame = Arc<Mutex<Child>>;
+#[cfg(windows)]
+pub type RunningGame = Arc<Mutex<std::process::Child>>;
+#[cfg(not(windows))]
+pub type RunningGame = Arc<Mutex<rockoon_platform::UnixGame>>;
 
 #[derive(Clone, Debug)]
 pub struct Resource {
     pub path: PathBuf,
+    #[cfg(test)]
     pub name: String,
     pub disabled: bool,
 }
@@ -18,7 +22,9 @@ pub struct Resource {
 pub struct Instance {
     pub visuals: crate::assets::GameAssets,
     pub root: PathBuf,
+    #[cfg(test)]
     pub maps: Vec<Resource>,
+    #[cfg(test)]
     pub mods: Vec<Resource>,
 }
 
@@ -36,7 +42,9 @@ pub fn discover(root: PathBuf) -> Result<Instance, String> {
     }
     Ok(Instance {
         visuals: crate::assets::GameAssets::load(&root),
+        #[cfg(test)]
         maps: list_resources(&root.join("ModLoader/Maps"), &["nmo", "cmo"], false)?,
+        #[cfg(test)]
         mods: list_resources(
             &root.join("ModLoader/Mods"),
             &["bmod", "bmodp", "zip"],
@@ -50,6 +58,7 @@ fn error(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+#[cfg(test)]
 fn list_resources(
     root: &Path,
     extensions: &[&str],
@@ -100,18 +109,58 @@ fn list_resources(
 }
 
 /// Matches the existing launcher: Player.exe runs with Bin as its working directory.
-pub fn launch(instance: &Instance, map: Option<&Path>) -> Result<RunningGame, String> {
-    if !cfg!(windows) {
-        return Err("此原生预览版暂时只支持在 Windows 启动游戏".to_owned());
-    }
+pub fn launch(
+    instance: &Instance,
+    map: Option<&Path>,
+    prefs: &crate::preferences::Preferences,
+) -> Result<RunningGame, String> {
     if player_running()? {
         return Err("Ballance 已在运行，请先退出游戏".to_owned());
     }
+    if map.is_some() {
+        crate::jobs::ensure_io(&instance.root)?;
+    }
     let mut command = launch_command(instance, map)?;
-    let child = command
-        .spawn()
-        .map_err(|error| format!("启动失败：{error}"))?;
-    Ok(Arc::new(Mutex::new(child)))
+    if map.is_some() {
+        command.env("ROCKOON_MAP_ONLY", if prefs.map_only { "1" } else { "0" });
+        command.env("ROCKOON_LEVEL_SLOT", prefs.level_slot.to_string());
+    }
+    if !prefs.motd.trim().is_empty() {
+        command.env("ROCKOON_MOTD", &prefs.motd);
+    }
+    #[cfg(windows)]
+    {
+        let child = command
+            .spawn()
+            .map_err(|error| format!("启动失败：{error}"))?;
+        Ok(Arc::new(Mutex::new(child)))
+    }
+    #[cfg(not(windows))]
+    {
+        let context = rockoon_platform::Context::default();
+        rockoon_platform::wine::prepare_wine_prefix(context.clone()).map_err(error)?;
+        let env = command
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| {
+                    (
+                        k.to_string_lossy().to_string(),
+                        v.to_string_lossy().to_string(),
+                    )
+                })
+            })
+            .collect();
+        let pid = rockoon_platform::process::execute(
+            context,
+            instance.root.join("Bin").display().to_string(),
+            instance.root.join("Bin/Player.exe").display().to_string(),
+            Some(env),
+            None,
+            Some(false),
+        )
+        .map_err(error)?;
+        Ok(Arc::new(Mutex::new(rockoon_platform::UnixGame::new(pid))))
+    }
 }
 
 fn launch_command(instance: &Instance, map: Option<&Path>) -> Result<Command, String> {
@@ -245,9 +294,40 @@ pub fn player_running() -> Result<bool, String> {
     }
 }
 
+pub fn launch_tas(
+    instance: &Instance,
+    prefs: &crate::preferences::Preferences,
+    fps: f32,
+) -> Result<RunningGame, String> {
+    if player_running()? {
+        return Err("Ballance 已在运行，请先退出游戏".into());
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut command = launch_command(instance, None)?;
+        command
+            .args(["-w", "512", "-h", "384"])
+            .env("ROCKOON_TAS_FPS", fps.to_string())
+            .creation_flags(0x08000080);
+        if !prefs.motd.is_empty() {
+            command.env("ROCKOON_MOTD", &prefs.motd);
+        }
+        let child = command.spawn().map_err(error)?;
+        Ok(Arc::new(Mutex::new(child)))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (instance, prefs, fps);
+        Err("TAS 回放仅支持 Windows".into())
+    }
+}
+
 #[cfg(not(windows))]
 pub fn player_running() -> Result<bool, String> {
-    Ok(false)
+    rockoon_platform::process::find_processes("Player.exe".into())
+        .map(|p| !p.is_empty())
+        .map_err(error)
 }
 
 #[cfg(test)]

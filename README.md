@@ -6,8 +6,11 @@ Rockoon 是一款集成了 **下载、管理、启动** 于一体的 Ballance �
 
 ## 原生桌面版本（开发中）
 
-去除 WebView 的 Rust + Iced 版本位于 [native/](native/README.md)，已接入本地实例选择、游戏启动、地图浏览与模组启停。
-当前为 Windows 预览，完整功能迁移仍在进行。运行：`cargo run --manifest-path native/Cargo.toml`。
+去除 WebView 的 Rust + Iced 版本位于 [native/](native/README.md)，已接入游戏/补丁安装、资源包导入、地图与模组管理、
+游戏和模组配置、存档与配置方案、素材预览、下载任务及独立 TAS 编辑器。
+首页使用游戏目录中的原版天空与菜单素材，目录操作收在文件夹菜单中。
+Windows 为本机验证平台，macOS Wine 继续实验性维护。运行：cargo run --manifest-path native/Cargo.toml。
+迁移范围、数据兼容边界和验证方法见原生版说明。
 
 ## 功能
 

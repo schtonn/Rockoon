@@ -45,3 +45,19 @@ fn decode(path: &Path, expected_size: Option<(u32, u32)>) -> Option<image::Handl
         pixels.into_rgba8().into_raw(),
     ))
 }
+
+pub fn preview(path: &Path) -> Result<image::Handle, String> {
+    let reader = bitmap::ImageReader::open(path).map_err(|e| e.to_string())?;
+    let mut limits = bitmap::Limits::default();
+    limits.max_image_width = Some(8192);
+    limits.max_image_height = Some(8192);
+    limits.max_alloc = Some(128 * 1024 * 1024);
+    let mut reader = reader;
+    reader.limits(limits);
+    let pixels = reader.decode().map_err(|e| e.to_string())?.into_rgba8();
+    Ok(image::Handle::from_rgba(
+        pixels.width(),
+        pixels.height(),
+        pixels.into_raw(),
+    ))
+}
