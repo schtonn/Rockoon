@@ -9,6 +9,7 @@ mod jobs;
 mod keys;
 mod l10n;
 mod media;
+mod popup;
 mod preferences;
 mod process_guard;
 mod profiles;

@@ -19,10 +19,16 @@ impl GameAssets {
         }
     }
 
-    pub fn launch_button(&self) -> Option<&image::Handle> {
-        self.selected_button
-            .as_ref()
-            .or(self.normal_button.as_ref())
+    pub fn launch_button(&self, hovered: bool) -> Option<&image::Handle> {
+        if hovered {
+            self.selected_button
+                .as_ref()
+                .or(self.normal_button.as_ref())
+        } else {
+            self.normal_button
+                .as_ref()
+                .or(self.selected_button.as_ref())
+        }
     }
 }
 

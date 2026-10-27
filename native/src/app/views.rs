@@ -6,31 +6,31 @@ use iced::{
         scrollable, space, stack, text, text_input,
     },
 };
-fn action<'a>(label: &'a str, message: Message, enabled: bool) -> Element<'a, Message> {
+fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
     button(text(crate::l10n::text(label)).size(14))
         .padding([8, 12])
         .style(style::quiet)
         .on_press_maybe(enabled.then_some(message))
         .into()
 }
+fn menu_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
+    button(text(crate::l10n::text(label)).size(14))
+        .padding([8, 10])
+        .width(Fill)
+        .style(style::quiet)
+        .on_press_maybe(enabled.then_some(message))
+        .into()
+}
+fn menu_panel<'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> iced::widget::Container<'a, Message> {
+    container(content).padding(6).style(style::menu)
+}
 impl App {
     pub fn view(&self) -> Element<'_, Message> {
         let mut nav = column![].spacing(6);
-        for page in [
-            Page::Home,
-            Page::Maps,
-            Page::Mods,
-            Page::Assets,
-            Page::Config,
-            Page::Data,
-            Page::Profiles,
-            Page::Install,
-            Page::Tasks,
-        ] {
+        for page in [Page::Home, Page::Maps, Page::Config, Page::Tasks] {
             nav = nav.push(self.nav(page));
-        }
-        if self.preferences.enable_tas {
-            nav = nav.push(self.nav(Page::Tas));
         }
         nav = nav.push(space::vertical()).push(self.nav(Page::Settings));
         let sidebar = container(nav.height(Fill))
@@ -39,21 +39,7 @@ impl App {
             .height(Fill)
             .clip(true)
             .style(style::sidebar);
-        let mut header = column![self.header()].spacing(12);
-        if let Some(notice) = &self.notice {
-            header = header.push(
-                container(
-                    row![
-                        text(notice).size(14).width(Fill),
-                        action("关闭", Message::Dismiss, true)
-                    ]
-                    .spacing(12)
-                    .align_y(Alignment::Center),
-                )
-                .padding(12)
-                .style(style::notice),
-            );
-        }
+        let header = self.header();
         let content: Element<'_, Message> = if self.page == Page::Home {
             stack![self.home(), container(header).padding(24).width(Fill)]
                 .width(Fill)
@@ -71,6 +57,14 @@ impl App {
                 Page::Settings => self.settings(),
                 Page::Home => unreachable!(),
             };
+            let tabs = self.section_tabs();
+            let body = if self.detached_tas
+                || !matches!(self.page.section(), Page::Maps | Page::Config | Page::Tasks)
+            {
+                body
+            } else {
+                column![tabs, body].spacing(16).height(Fill).into()
+            };
             container(column![header, body].spacing(20).height(Fill))
                 .padding(24)
                 .width(Fill)
@@ -81,6 +75,38 @@ impl App {
             content
         } else {
             row![sidebar, content].height(Fill).into()
+        };
+        let base = if let Some(notice) = &self.notice {
+            let alpha = notice.opacity();
+            let toast = opaque(
+                container(
+                    row![
+                        text(&notice.text)
+                            .size(14)
+                            .color(style::INK.scale_alpha(alpha))
+                            .width(Fill),
+                        button(text("×").size(18).color(style::INK.scale_alpha(alpha)))
+                            .padding([2, 7])
+                            .style(style::quiet)
+                            .on_press(Message::Dismiss)
+                    ]
+                    .spacing(12)
+                    .align_y(Alignment::Center),
+                )
+                .padding(14)
+                .width(440)
+                .style(move |_| style::toast(alpha)),
+            );
+            stack![
+                base,
+                container(column![space::vertical(), row![space::horizontal(), toast]])
+                    .padding(24)
+                    .width(Fill)
+                    .height(Fill)
+            ]
+            .into()
+        } else {
+            base
         };
         if let Some(prompt) = &self.prompt {
             let mut body = column![text(&prompt.title).size(19)].spacing(18).width(420);
@@ -221,18 +247,48 @@ impl App {
     }
     fn nav(&self, page: Page) -> Element<'_, Message> {
         button(
-            text(crate::l10n::text(page.label()))
+            text(crate::l10n::text(page.section_label()))
                 .size(15)
                 .font(iced::Font {
                     weight: iced::font::Weight::Medium,
                     ..iced::Font::with_name("Source Han Sans CN")
                 }),
         )
-        .on_press(Message::Page(page))
+        .on_press(Message::Page(if self.page.section() == page.section() {
+            self.page
+        } else {
+            page
+        }))
         .width(Fill)
         .padding([10, 14])
-        .style(style::nav(self.page == page))
+        .style(style::nav(self.page.section() == page.section()))
         .into()
+    }
+    fn section_tabs(&self) -> Element<'_, Message> {
+        let pages: &[Page] = match self.page.section() {
+            Page::Maps => &[Page::Maps, Page::Mods, Page::Assets],
+            Page::Config => &[Page::Config, Page::Data, Page::Profiles],
+            Page::Tasks => &[Page::Tasks, Page::Install],
+            _ => &[],
+        };
+        if pages.is_empty() {
+            return space().height(0).into();
+        }
+        let mut tabs = row![].spacing(6);
+        for &page in pages {
+            let label = if page == Page::Config {
+                "参数"
+            } else {
+                page.label()
+            };
+            tabs = tabs.push(
+                button(text(crate::l10n::text(label)).size(14))
+                    .padding([7, 12])
+                    .style(style::tab(self.page == page))
+                    .on_press(Message::Page(page)),
+            );
+        }
+        tabs.into()
     }
     fn header(&self) -> Element<'_, Message> {
         let full = self
@@ -254,35 +310,33 @@ impl App {
         } else {
             full
         };
-        let folder = button(iced::widget::canvas(FolderIcon).width(22).height(20))
+        let trigger = button(iced::widget::canvas(FolderIcon).width(22).height(20))
             .padding([7, 9])
             .style(style::quiet)
             .on_press(Message::FolderMenu);
+        let panel = if self.folder_menu {
+            let mut menu = column![].spacing(3).width(156);
+            if let Some(root) = self.root() {
+                menu = menu.push(menu_action("打开目录", Message::Open(root), true));
+            }
+            menu = menu.push(menu_action(
+                "更换目录",
+                Message::PickFolder,
+                !self.locked() && !self.picking_folder,
+            ));
+            Some(menu_panel(menu).into())
+        } else {
+            None
+        };
+        let folder = crate::popup::menu(trigger, panel, false);
         let actions = row![folder, text(path).size(14)]
             .spacing(8)
             .align_y(Alignment::Center);
         let mut header = row![].align_y(Alignment::Center);
         if self.page != Page::Home {
-            header = header.push(text(crate::l10n::text(self.page.label())).size(22));
+            header = header.push(text(crate::l10n::text(self.page.section_label())).size(22));
         }
-        let mut result = column![header.push(space::horizontal()).push(actions)]
-            .spacing(8)
-            .width(Fill);
-        if self.folder_menu {
-            let mut menu = column![].spacing(4).width(156);
-            if let Some(root) = self.root() {
-                menu = menu.push(action("打开目录", Message::Open(root), true));
-            }
-            menu = menu.push(action(
-                "更换目录",
-                Message::PickFolder,
-                !self.locked() && !self.picking_folder,
-            ));
-            result = result.push(
-                container(container(menu).padding(8).style(style::sidebar)).align_right(Fill),
-            );
-        }
-        result.into()
+        header.push(space::horizontal()).push(actions).into()
     }
     fn home(&self) -> Element<'_, Message> {
         let enabled =
@@ -299,7 +353,7 @@ impl App {
         let action: Element<'_, Message> = if let Some(atlas) = self
             .instance
             .as_ref()
-            .and_then(|i| i.visuals.launch_button())
+            .and_then(|i| i.visuals.launch_button(self.launch_hover && enabled))
         {
             let skin = image(atlas.clone())
                 .width(256)
@@ -316,11 +370,15 @@ impl App {
             })
             .center_x(Fill)
             .center_y(Fill);
-            button(stack![skin, caption].width(256).height(64).clip(true))
-                .padding(0)
-                .style(style::original_button)
-                .on_press_maybe(enabled.then_some(message))
-                .into()
+            iced::widget::mouse_area(
+                button(stack![skin, caption].width(256).height(64).clip(true))
+                    .padding(0)
+                    .style(style::original_button)
+                    .on_press_maybe(enabled.then_some(message)),
+            )
+            .on_enter(Message::LaunchHover(true))
+            .on_exit(Message::LaunchHover(false))
+            .into()
         } else {
             button(text(crate::l10n::text(label)).size(15))
                 .padding([14, 28])
@@ -450,43 +508,44 @@ impl App {
                     ),
                 }
             };
-            let line = row![
-                text(&entry.name).size(14).width(Fill),
-                primary,
-                action("···", Message::EntryMenu(entry.path.clone()), true)
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center);
-            list = list.push(container(line).padding([8, 0]));
-            if self.entry_menu.as_ref() == Some(&entry.path) {
+            let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
+                let mut menu = column![].spacing(3).width(156);
                 if kind == Kind::Mods && !entry.directory {
-                    list = list.push(
-                        container(action(
-                            "配置",
-                            Message::FindConfig(entry.path.clone()),
-                            true,
-                        ))
-                        .align_right(Fill),
-                    );
+                    menu = menu.push(menu_action(
+                        "配置",
+                        Message::FindConfig(entry.path.clone()),
+                        true,
+                    ));
                 }
-                list = list.push(
-                    row![
-                        space::horizontal(),
-                        action(
-                            "重命名",
-                            Message::Prompt(PromptKind::Rename(entry.path.clone())),
-                            !self.locked()
-                        ),
-                        action("移动", Message::Move(entry.path.clone()), !self.locked()),
-                        action(
-                            "删除",
-                            Message::Prompt(PromptKind::Delete(entry.path.clone())),
-                            !self.locked()
-                        ),
-                    ]
-                    .spacing(8),
-                );
-            }
+                menu = menu
+                    .push(menu_action(
+                        "重命名",
+                        Message::Prompt(PromptKind::Rename(entry.path.clone())),
+                        !self.locked(),
+                    ))
+                    .push(menu_action(
+                        "移动",
+                        Message::Move(entry.path.clone()),
+                        !self.locked(),
+                    ))
+                    .push(menu_action(
+                        "删除",
+                        Message::Prompt(PromptKind::Delete(entry.path.clone())),
+                        !self.locked(),
+                    ));
+                Some(menu_panel(menu).into())
+            } else {
+                None
+            };
+            let more = crate::popup::menu(
+                action("···", Message::EntryMenu(entry.path.clone()), true),
+                panel,
+                true,
+            );
+            let line = row![text(&entry.name).size(14).width(Fill), primary, more]
+                .spacing(8)
+                .align_y(Alignment::Center);
+            list = list.push(container(line).padding([8, 0]));
             list = list.push(rule::horizontal(1));
         }
         if self.entries.is_empty() {
@@ -735,7 +794,41 @@ impl App {
                             None => patch.latest.clone(),
                         })
                         .size(14),
-                        action("版本", Message::Versions(index), !self.busy),
+                        crate::popup::menu(
+                            action(
+                                &self
+                                    .version
+                                    .as_ref()
+                                    .filter(|_| self.patch_index == Some(index))
+                                    .map(|v| format!("#{}", v.version))
+                                    .unwrap_or_else(|| "版本".into()),
+                                Message::Versions(index),
+                                !self.busy
+                            ),
+                            if self.version_menu == Some(index) {
+                                let mut options =
+                                    column![menu_action("最新版本", Message::LatestVersion, true)]
+                                        .spacing(3)
+                                        .width(224);
+                                if self.versions.is_empty() {
+                                    options = options.push(
+                                        container(text(crate::l10n::text("读取中…")).size(14))
+                                            .padding(10),
+                                    );
+                                }
+                                for version in &self.versions {
+                                    options = options.push(menu_action(
+                                        &version.to_string(),
+                                        Message::Version(version.clone()),
+                                        true,
+                                    ));
+                                }
+                                Some(menu_panel(scrollable(options).height(240)).into())
+                            } else {
+                                None
+                            },
+                            true
+                        ),
                         action(
                             if patch.installed.is_some() {
                                 "更新 / 重装"
@@ -749,17 +842,6 @@ impl App {
                     .spacing(10)
                     .align_y(Alignment::Center),
                 );
-                if self.patch_index == Some(index) {
-                    content = content.push(
-                        pick_list(
-                            self.versions.clone(),
-                            self.version.clone(),
-                            Message::Version,
-                        )
-                        .placeholder("最新版本")
-                        .text_size(14),
-                    );
-                }
                 content = content.push(rule::horizontal(1));
             }
             content = content.push(action(
@@ -901,10 +983,16 @@ impl App {
                     .on_input(|v| Message::PrefText("motd".into(), v))
             ]
             .align_y(Alignment::Center),
-            checkbox(prefs.enable_tas)
-                .label(crate::l10n::text("显示 TAS 编辑器"))
-                .text_size(14)
-                .on_toggle(|v| Message::PrefBool("tas".into(), v)),
+            row![
+                checkbox(prefs.enable_tas)
+                    .label(crate::l10n::text("启用 TAS 编辑器"))
+                    .text_size(14)
+                    .on_toggle(|v| Message::PrefBool("tas".into(), v)),
+                space::horizontal(),
+                action("打开 TAS 编辑器", Message::OpenTas, prefs.enable_tas)
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
             rule::horizontal(1),
             text(if prefs.language == "en" {
                 format!(

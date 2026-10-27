@@ -23,6 +23,12 @@ static WORDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
         serde_json::from_str(include_str!("../../src/i18n/languages/en.json")).unwrap_or_default();
     visit(&zh, &en, &mut map);
     for (zh, en) in [
+        ("资源", "Resources"),
+        ("下载", "Downloads"),
+        ("参数", "Options"),
+        ("启用 TAS 编辑器", "Enable TAS editor"),
+        ("打开 TAS 编辑器", "Open TAS editor"),
+        ("最新版本", "Latest version"),
         ("地图", "Maps"),
         ("模组", "Mods"),
         ("素材", "Assets"),

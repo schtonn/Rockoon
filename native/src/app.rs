@@ -29,6 +29,21 @@ pub enum Page {
     Settings,
 }
 impl Page {
+    fn section(self) -> Self {
+        match self {
+            Self::Maps | Self::Mods | Self::Assets => Self::Maps,
+            Self::Config | Self::Data | Self::Profiles => Self::Config,
+            Self::Install | Self::Tasks => Self::Tasks,
+            other => other,
+        }
+    }
+    fn section_label(self) -> &'static str {
+        match self.section() {
+            Self::Maps => "资源",
+            Self::Tasks => "下载",
+            other => other.label(),
+        }
+    }
     fn label(self) -> &'static str {
         match self {
             Self::Home => "Ballance",
@@ -87,6 +102,10 @@ pub enum Message {
     Rescanned(PathBuf, Result<Instance, String>),
     Page(Page),
     FolderMenu,
+    CloseMenus,
+    NoticeTick,
+    LaunchHover(bool),
+    LatestVersion,
     Search(String),
     Refresh,
     Open(PathBuf),
@@ -207,6 +226,28 @@ pub enum Message {
     Stats(Result<preferences::Stats, String>),
     Dismiss,
 }
+struct Notice {
+    text: String,
+    since: Instant,
+    duration: Duration,
+}
+impl Notice {
+    fn new(text: impl Into<String>, duration: Duration) -> Self {
+        Self {
+            text: text.into(),
+            since: Instant::now(),
+            duration,
+        }
+    }
+    fn opacity(&self) -> f32 {
+        (self
+            .duration
+            .saturating_sub(self.since.elapsed())
+            .as_secs_f32()
+            / 0.3)
+            .min(1.0)
+    }
+}
 pub struct App {
     detached_tas: bool,
     tas_level: u8,
@@ -231,7 +272,9 @@ pub struct App {
     running: Option<RunningGame>,
     session: Option<Instant>,
     search: String,
-    notice: Option<String>,
+    notice: Option<Notice>,
+    launch_hover: bool,
+    version_menu: Option<usize>,
     entries: Vec<Entry>,
     directory: PathBuf,
     asset_kind: Kind,
@@ -301,6 +344,8 @@ impl App {
             session: None,
             search: String::new(),
             notice: None,
+            launch_hover: false,
+            version_menu: None,
             entries: vec![],
             directory: PathBuf::new(),
             asset_kind: Kind::Skies,
@@ -387,7 +432,15 @@ impl App {
         }
     }
     fn error(&mut self, message: impl Into<String>) {
-        self.notice = Some(message.into());
+        self.notice = Some(Notice::new(message, Duration::from_secs(8)));
+    }
+    fn notify(&mut self, message: impl Into<String>) {
+        self.notice = Some(Notice::new(message, Duration::from_secs(5)));
+    }
+    fn close_menus(&mut self) {
+        self.folder_menu = false;
+        self.entry_menu = None;
+        self.version_menu = None;
     }
     fn save_preferences(&self) -> Task<Message> {
         let prefs = self.preferences.clone();
@@ -519,7 +572,33 @@ impl App {
         )
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if matches!(
+            &message,
+            Message::Open(_)
+                | Message::PickFolder
+                | Message::Prompt(_)
+                | Message::Move(_)
+                | Message::FindConfig(_)
+                | Message::Version(_)
+                | Message::LatestVersion
+                | Message::InstallPatch(_)
+                | Message::Browse(_)
+                | Message::Page(_)
+        ) {
+            self.close_menus();
+        }
         match message {
+            Message::CloseMenus => self.close_menus(),
+            Message::LaunchHover(value) => self.launch_hover = value,
+            Message::NoticeTick => {
+                if self
+                    .notice
+                    .as_ref()
+                    .is_some_and(|notice| notice.since.elapsed() >= notice.duration)
+                {
+                    self.notice = None;
+                }
+            }
             Message::Startup(result) => {
                 self.busy = false;
                 match result {
@@ -646,8 +725,15 @@ impl App {
                     }
                 }
             }
-            Message::FolderMenu => self.folder_menu = !self.folder_menu,
+            Message::FolderMenu => {
+                let open = !self.folder_menu;
+                self.close_menus();
+                self.folder_menu = open;
+            }
             Message::Page(page) => {
+                if page == self.page {
+                    return Task::none();
+                }
                 if page == Page::Tas && !self.detached_tas {
                     return self.update(Message::OpenTas);
                 }
@@ -992,7 +1078,7 @@ impl App {
                 self.mutating = false;
                 match result {
                     Ok(message) => {
-                        self.notice = Some(message);
+                        self.notify(message);
                         return self.reload();
                     }
                     Err(e) => self.error(e),
@@ -1218,10 +1304,15 @@ impl App {
             }
             Message::Versions(index) => {
                 if let Some(id) = self.patches.get(index).and_then(|p| p.package_id) {
+                    if self.patch_index != Some(index) {
+                        self.versions.clear();
+                        self.version = None;
+                    }
+                    self.close_menus();
+                    self.version_menu = Some(index);
                     self.patch_index = Some(index);
                     self.revision += 1;
                     let revision = self.revision;
-                    self.version = None;
                     return Task::perform(background(move || jobs::versions(id)), move |r| {
                         Message::VersionsLoaded(revision, r)
                     });
@@ -1236,6 +1327,7 @@ impl App {
                 }
             }
             Message::Version(version) => self.version = Some(version),
+            Message::LatestVersion => self.version = None,
             Message::InstallPatch(index) => {
                 if let (Some(root), Some(patch)) = (self.root(), self.patches.get(index).cloned()) {
                     let version = if self.patch_index == Some(index) {
@@ -1289,7 +1381,7 @@ impl App {
                     .find(|j| j.id == id)
                     .map(|j| j.request.root().to_owned());
                 match result {
-                    Ok(message) => self.notice = Some(message),
+                    Ok(message) => self.notify(message),
                     Err(e) => self.error(e),
                 }
                 if (self.root().is_none()
@@ -1760,12 +1852,12 @@ impl App {
                 return Task::perform(background(crate::system::register_protocol), Message::Saved);
             }
             Message::AutoUpdate(Ok(Some(release))) => {
-                self.notice = Some(format!("有新的原生版本：{}", release.version));
+                self.notify(format!("有新的原生版本：{}", release.version));
                 self.update_release = Some(release);
             }
             Message::AutoPatches(Ok(updates)) => {
                 if !updates.is_empty() {
-                    self.notice = Some(format!(
+                    self.notify(format!(
                         "补丁有更新：{}",
                         updates
                             .iter()
@@ -1776,15 +1868,15 @@ impl App {
                 }
             }
             Message::CheckUpdate => {
-                self.notice = Some("正在检查原生版更新…".into());
+                self.notify("正在检查原生版更新…");
                 return Task::perform(background(crate::updates::check), Message::UpdateChecked);
             }
             Message::UpdateChecked(result) => match result {
                 Ok(Some(release)) => {
-                    self.notice = Some(format!("可更新到 {}", release.version));
+                    self.notify(format!("可更新到 {}", release.version));
                     self.update_release = Some(release);
                 }
-                Ok(None) => self.notice = Some("暂无较新的原生版发布".into()),
+                Ok(None) => self.notify("暂无较新的原生版发布"),
                 Err(e) => self.error(e),
             },
             Message::DownloadUpdate => {
@@ -1881,7 +1973,7 @@ impl App {
                             job.cancel();
                         }
                     }
-                    self.notice = Some("正在结束后台操作…".into());
+                    self.notify("正在结束后台操作…");
                     return Task::none();
                 }
                 crate::media::stop();
@@ -2044,6 +2136,10 @@ impl App {
         if self.running.is_some() || self.jobs.iter().any(|j| !j.progress().done) || self.quitting {
             subscriptions
                 .push(iced::time::every(Duration::from_millis(500)).map(|_| Message::Tick));
+        }
+        if self.notice.is_some() {
+            subscriptions
+                .push(iced::time::every(Duration::from_millis(50)).map(|_| Message::NoticeTick));
         }
         Subscription::batch(subscriptions)
     }
