@@ -242,9 +242,11 @@ impl App {
     pub fn view(&self) -> Element<'_, Message> {
         let sidebar = container(
             column![
-                text("ROCKOON").size(19).color(style::INK),
+                button(text("ROCKOON").size(19).color(style::INK))
+                    .on_press(Message::Page(Page::Home))
+                    .style(style::quiet)
+                    .padding(0),
                 space::vertical().height(32),
-                self.nav("开始", Page::Home),
                 self.nav("地图", Page::Maps),
                 self.nav("模组", Page::Mods),
             ]
@@ -296,9 +298,9 @@ impl App {
 
     fn header(&self) -> Element<'_, Message> {
         let title = match self.page {
-            Page::Home => "开始",
-            Page::Maps => "地图",
-            Page::Mods => "模组",
+            Page::Home => None,
+            Page::Maps => Some("地图"),
+            Page::Mods => Some("模组"),
         };
         let mut actions = row![].spacing(8).align_y(Alignment::Center);
         if let Some(instance) = &self.instance {
@@ -323,9 +325,11 @@ impl App {
                     .then_some(Message::PickFolder),
             ),
         );
-        row![text(title).size(22), space::horizontal(), actions]
-            .align_y(Alignment::Center)
-            .into()
+        let mut header = row![].align_y(Alignment::Center);
+        if let Some(title) = title {
+            header = header.push(text(title).size(22));
+        }
+        header.push(space::horizontal()).push(actions).into()
     }
 
     fn home(&self) -> Element<'_, Message> {
