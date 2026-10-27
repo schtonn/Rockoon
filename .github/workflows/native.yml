@@ -1,0 +1,32 @@
+name: Native desktop
+
+on:
+  push:
+    branches: [codex/native-desktop]
+    paths: ["native/**", ".github/workflows/native.yml"]
+  pull_request:
+    paths: ["native/**", ".github/workflows/native.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - run: cargo fmt --manifest-path native/Cargo.toml --check
+      - run: cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings
+      - run: cargo test --manifest-path native/Cargo.toml --locked
+      - run: cargo build --release --manifest-path native/Cargo.toml --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Rockoon-native-windows-x64
+          path: native/target/release/rockoon-native.exe

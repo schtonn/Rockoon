@@ -2,7 +2,12 @@
 
 Rockoon 是一款集成了 **下载、管理、启动** 于一体的 Ballance 启动器。
 
-本启动器借助 [Tauri 2.0](https://v2.tauri.app/) 开发，需要 webview 才能正常运行与显示。最低支持的系统以及 webview 版本参见[官方文档](https://v2.tauri.app/reference/webview-versions/)。
+现有发布版借助 [Tauri 2.0](https://v2.tauri.app/) 开发，需要 webview 才能正常运行与显示。最低支持的系统以及 webview 版本参见[官方文档](https://v2.tauri.app/reference/webview-versions/)。
+
+## 原生桌面版本（开发中）
+
+去除 WebView 的 Rust + Iced 版本位于 [native/](native/README.md)，已接入本地实例选择、游戏启动、地图浏览与模组启停。
+当前为 Windows 预览，完整功能迁移仍在进行。运行：`cargo run --manifest-path native/Cargo.toml`。
 
 ## 功能
 
@@ -86,7 +91,8 @@ CI=true pnpm tauri build --target universal-apple-darwin   # Apple 芯片 + Inte
 
 ## 技术栈
 
-- **前端**: Vue 3 + TypeScript + Naive UI + Pinia + Vue I18n + Vue Router
+- **原生前端（迁移中）**: Rust + Iced（tiny-skia 软件渲染）
+- **现有 Web 前端**: React 18 + TypeScript + shadcn/ui + Zustand + React Router
 - **后端**: Tauri 2.0 (Rust)
 - **原生模块**: C++ (BMLPlus plugin, CMake 构建)
 
