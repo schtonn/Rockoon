@@ -60,6 +60,7 @@ impl Context {
     }
 }
 #[cfg(not(windows))]
+#[derive(Debug)]
 pub struct UnixGame {
     pid: u32,
 }
