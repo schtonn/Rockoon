@@ -68,6 +68,9 @@ fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Messa
         .on_press_maybe(enabled.then_some(message))
         .into()
 }
+fn separator<'a>() -> Element<'a, Message> {
+    container(rule::horizontal(1)).padding([8, 0]).into()
+}
 fn menu_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
     let content: Element<'a, Message> = if let Some(icon) = crate::icons::for_label(label) {
         crate::icons::label(icon, crate::l10n::text(label))
@@ -214,6 +217,18 @@ impl App {
                 base,
                 opaque(
                     container(container(body).padding(24).style(style::menu))
+                        .center_x(Fill)
+                        .center_y(Fill)
+                        .style(style::shade)
+                )
+            ]
+            .into();
+        }
+        if self.component_editor {
+            return stack![
+                base,
+                opaque(
+                    container(self.component_dialog())
                         .center_x(Fill)
                         .center_y(Fill)
                         .style(style::shade)
@@ -375,6 +390,8 @@ impl App {
             self.page
         } else if page == Page::Maps {
             Page::Hub
+        } else if page == Page::Config {
+            Page::Install
         } else {
             page
         }))
@@ -388,17 +405,19 @@ impl App {
             let online = self.page == Page::Hub;
             let source = row![
                 button(text("在线").size(14))
-                    .padding([7, 12])
+                    .padding([6, 12])
+                    .height(32)
                     .style(style::tab(online))
                     .on_press(Message::ResourceSource(true)),
                 button(text("本地").size(14))
-                    .padding([7, 12])
+                    .padding([6, 12])
+                    .height(32)
                     .style(style::tab(!online))
                     .on_press(Message::ResourceSource(false)),
             ]
             .spacing(2)
             .align_y(Alignment::Center);
-            let mut tabs = row![container(source).padding(3).style(style::menu)]
+            let mut tabs = row![container(source).padding(2).style(style::tabs)]
                 .spacing(16)
                 .align_y(Alignment::Center);
             tabs = tabs.push(pick_list(
@@ -425,24 +444,24 @@ impl App {
                 .into();
         }
         let pages: &[Page] = match self.page.section() {
-            Page::Config => &[Page::Config, Page::Data, Page::Profiles],
-
+            Page::Config => &[Page::Install, Page::Config, Page::Data, Page::Profiles],
             _ => &[],
         };
-        let mut tabs = row![].spacing(6);
+        let mut tabs = row![].spacing(2);
         for &page in pages {
             tabs = tabs.push(
                 button(
                     text(crate::l10n::text(if page == Page::Config {
-                        "参数"
+                        "选项"
                     } else if page == Page::Profiles {
-                        "已保存的设置"
+                        "配置集"
                     } else {
                         page.label()
                     }))
                     .size(14),
                 )
-                .padding([7, 12])
+                .padding([6, 12])
+                .height(32)
                 .style(style::tab(self.page == page))
                 .on_press(Message::Page(page)),
             );
@@ -450,7 +469,7 @@ impl App {
         if pages.is_empty() {
             space().into()
         } else {
-            container(tabs).padding(3).style(style::menu).into()
+            container(tabs).padding(2).style(style::tabs).into()
         }
     }
     fn header(&self) -> Element<'_, Message> {
@@ -505,31 +524,7 @@ impl App {
             })
             .on_press_maybe(self.root().map(Message::Open));
         let folder_row = row![trigger, path].spacing(8).align_y(Alignment::Center);
-        let mut actions = column![folder_row].spacing(4).align_x(Alignment::Start);
-        if matches!(self.page, Page::Home | Page::Install) {
-            let home = self.page == Page::Home;
-            actions = actions.push(
-                button(
-                    text(if home {
-                        "游戏与组件"
-                    } else {
-                        "返回 Ballance"
-                    })
-                    .size(14),
-                )
-                .padding([7, 9])
-                .style(if home {
-                    style::sky_button
-                } else {
-                    style::secondary
-                })
-                .on_press(Message::Page(if home {
-                    Page::Install
-                } else {
-                    Page::Home
-                })),
-            );
-        }
+        let actions = column![folder_row].spacing(4).align_x(Alignment::Start);
         let mut header = row![].align_y(Alignment::Center);
         if self.page != Page::Home {
             header = header.push(text(crate::l10n::text(self.page.section_label())).size(22));
@@ -551,7 +546,7 @@ impl App {
         } else {
             ("Browse", Message::PickFolder)
         };
-        let action: Element<'_, Message> = if let Some(visuals) = self
+        let start_button: Element<'_, Message> = if let Some(visuals) = self
             .instance
             .as_ref()
             .map(|i| &i.visuals)
@@ -572,8 +567,28 @@ impl App {
                 .on_press_maybe(enabled.then_some(message))
                 .into()
         };
+        let config: Element<'_, Message> = if let Some(visuals) = self
+            .instance
+            .as_ref()
+            .map(|i| &i.visuals)
+            .filter(|v| v.launch_button(false).is_some())
+        {
+            crate::launch::sized_button(
+                visuals.launch_button(false).unwrap().clone(),
+                visuals.launch_button(true).unwrap().clone(),
+                crate::launch::caption(visuals, "Config", true),
+                true,
+                Message::Page(Page::Install),
+                iced::Size::new(192.0, 48.0),
+            )
+        } else {
+            action("CONFIG", Message::Page(Page::Install), true)
+        };
+        let menu = column![config, start_button]
+            .spacing(4)
+            .align_x(Alignment::Center);
         let foreground =
-            container(column![space::vertical(), container(action).align_right(Fill)].height(Fill))
+            container(column![space::vertical(), container(menu).align_right(Fill)].height(Fill))
                 .padding(28)
                 .width(Fill)
                 .height(Fill);
@@ -774,7 +789,15 @@ impl App {
                             Kind::Sounds => Message::Sound(entry.path.clone()),
                         }
                     }),
-                primary
+                text(if entry.directory {
+                    String::new()
+                } else {
+                    crate::hub::size(entry.size)
+                })
+                .size(14)
+                .width(88)
+                .align_x(Alignment::End),
+                container(primary).width(76).align_right(Fill)
             ]
             .spacing(8)
             .align_y(Alignment::Center);
@@ -783,7 +806,7 @@ impl App {
                 panel,
                 Message::EntryMenu(entry.path.clone()),
             ));
-            list = list.push(rule::horizontal(1));
+            list = list.push(separator());
         }
         let visible = self
             .entries
@@ -871,34 +894,24 @@ impl App {
         .into()
     }
     fn local_components(&self) -> Element<'_, Message> {
-        let Some(root) = self.root() else {
+        let Some(instance) = &self.instance else {
             return self.empty();
         };
-        let mut list = column![text("当前游戏目录中的组件").size(16)].spacing(10);
-        let player = root.join("Bin/Player.exe");
-        for (name, exists) in [
-            ("Ballance 游戏本体", player.is_file()),
-            (
-                "NewPlayer 兼容运行器",
-                std::fs::metadata(&player).is_ok_and(|m| m.len() != 155648),
-            ),
-            (
-                "BML+ 模组加载器",
-                root.join("BuildingBlocks/BMLPlus.dll").is_file(),
-            ),
-            (
-                "BML 模组加载器",
-                root.join("BuildingBlocks/BML.dll").is_file(),
-            ),
-        ] {
-            if exists {
-                list = list.push(
-                    row![text(name).size(14).width(Fill), text("已安装").size(14)]
-                        .align_y(Alignment::Center),
-                );
-            }
+        let mut list = column![text("Ballance").size(16)].spacing(8);
+        for component in &instance.components {
+            list = list.push(
+                container(
+                    row![
+                        text(&component.name).size(14).width(Fill),
+                        text(&component.version).size(14)
+                    ]
+                    .align_y(Alignment::Center),
+                )
+                .height(ROW_HEIGHT)
+                .center_y(ROW_HEIGHT),
+            );
         }
-        list.push(action("管理组件", Message::Page(Page::Install), true))
+        list.push(action("配置游戏", Message::Page(Page::Install), true))
             .into()
     }
     pub(super) fn sky_picker(&self) -> Element<'_, Message> {
@@ -1418,7 +1431,7 @@ impl App {
                         .spacing(8)
                         .align_y(Alignment::Center),
                     )
-                    .push(rule::horizontal(1));
+                    .push(separator());
             }
         }
         scrollable(container(list).padding(iced::Padding {
@@ -1428,150 +1441,163 @@ impl App {
         .height(Fill)
         .into()
     }
-    fn patch_row<'a>(&'a self, index: usize, name: &str, help: &str) -> Element<'a, Message> {
-        let patch = &self.patches[index];
-        let selected = self
+    fn component_dialog(&self) -> Element<'_, Message> {
+        use crate::components::{self, ReleaseChoice};
+        let targets = components::targets(&self.patches);
+        let selected = targets
+            .iter()
+            .find(|t| Some(t.index) == self.patch_index)
+            .cloned();
+        let mut releases = vec![ReleaseChoice::Latest];
+        releases.extend(self.versions.iter().cloned().map(ReleaseChoice::Version));
+        let release = self
             .version
-            .as_ref()
-            .filter(|_| self.patch_index == Some(index))
-            .map(|v| format!("#{}", v.version))
-            .unwrap_or_else(|| "选择版本".into());
-        let versions = if self.version_menu == Some(index) {
-            let mut options = column![menu_action("最新版本", Message::LatestVersion, true)]
-                .spacing(3)
-                .width(280);
-            if self.versions.is_empty() {
-                options = options.push(text("读取中…").size(14));
+            .clone()
+            .map(ReleaseChoice::Version)
+            .unwrap_or(ReleaseChoice::Latest);
+        let mut body = column![text("配置当前游戏").size(19)]
+            .spacing(14)
+            .width(480);
+        if self.busy {
+            body = body.push(text("读取可安装组件…").size(14));
+        } else if self.patch_index.is_some() {
+            body = body.push(
+                row![
+                    text("组件").size(14).width(Fill),
+                    pick_list(targets, selected, |t| Message::Versions(t.index)).width(240)
+                ]
+                .align_y(Alignment::Center),
+            );
+            body = body.push(
+                row![
+                    text("版本").size(14).width(Fill),
+                    pick_list(releases, Some(release), Message::Version).width(240)
+                ]
+                .align_y(Alignment::Center),
+            );
+            if self.versions_loading {
+                body = body.push(text("读取历史版本…").size(14));
             }
-            for version in &self.versions {
-                options = options.push(menu_action(
-                    &version.to_string(),
-                    Message::Version(version.clone()),
-                    true,
-                ));
-            }
-            Some(menu_panel(scrollable(options).height(240)).into())
-        } else {
-            None
-        };
-        row![
-            crate::hint::label(name.to_owned(), help.to_owned()),
-            space::horizontal(),
-            text(if patch.installed.is_some() {
-                "已安装"
-            } else {
-                "未安装"
-            })
-            .size(14),
-            crate::popup::menu(
-                button(text(selected).size(14))
-                    .width(CONTROL_WIDTH)
-                    .padding(6)
-                    .style(style::secondary)
-                    .on_press_maybe((!self.busy).then_some(Message::Versions(index))),
-                versions,
-                true
-            ),
-            action(
-                if patch.installed.is_some() {
-                    "更新 / 重装"
+            let help = if self.component_target.starts_with("player-") {
+                if self.component_target == "player-msvc2022" {
+                    "NewPlayer 替换当前游戏的运行器，这个备用构建可用于排查兼容问题。"
                 } else {
-                    "安装"
-                },
-                Message::InstallPatch(index),
-                !self.locked()
-            )
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .into()
+                    "NewPlayer 替换当前游戏的运行器，修复兼容问题并提供窗口和宽屏设置。"
+                }
+            } else if matches!(self.component_target.as_str(), "bmlplus" | "bml") {
+                "加载器依赖当前目录的 NewPlayer 来加载地图和模组，缺少时会先安装 NewPlayer。"
+            } else {
+                "这个组件会安装到当前游戏目录。"
+            };
+            body = body.push(text(help).size(14));
+            if self.component_target == "bml" {
+                body =
+                    body.push(text("旧版 BML 与 BML+ 只能启用一个，安装时会切换加载器。").size(14));
+            }
+        }
+        if let Some(error) = &self.component_error {
+            body = body.push(text(error).size(14));
+            body = body.push(action(
+                "重试",
+                Message::EditComponents(self.component_target.clone()),
+                !self.busy,
+            ));
+        }
+        body = body.push(
+            row![
+                space::horizontal(),
+                action("取消", Message::CancelComponents, true),
+                action(
+                    "安装所选版本",
+                    Message::InstallPatch(self.patch_index.unwrap_or(usize::MAX)),
+                    !self.locked()
+                        && self
+                            .patch_index
+                            .and_then(|i| self.patches.get(i))
+                            .is_some_and(|p| p.package_id.is_some())
+                )
+            ]
+            .spacing(8),
+        );
+        container(body).padding(24).style(style::menu).into()
     }
     fn install(&self) -> Element<'_, Message> {
-        let mut content = column![text("游戏与组件").size(16)].spacing(8);
-        if self.instance.is_some() {
-            if self.busy {
-                content = content.push(
-                    container(text("读取组件列表…").size(14))
-                        .height(ROW_HEIGHT)
-                        .center_y(ROW_HEIGHT),
+        let mut content = column![].spacing(10);
+        if let Some(instance) = &self.instance {
+            let mut game = column![
+                row![
+                    text("Ballance").size(18).width(Fill),
+                    action(
+                        "编辑",
+                        Message::EditComponents("player-vc6".into()),
+                        !self.locked()
+                    )
+                ]
+                .align_y(Alignment::Center)
+            ]
+            .spacing(8);
+            for component in &instance.components {
+                game = game.push(
+                    container(
+                        row![
+                            text(&component.name).size(14),
+                            text(&component.version).size(14).width(Fill),
+                            action(
+                                "更新 / 重装",
+                                Message::EditComponents(component.key.clone()),
+                                !self.locked()
+                            )
+                        ]
+                        .spacing(12)
+                        .align_y(Alignment::Center),
+                    )
+                    .height(ROW_HEIGHT)
+                    .center_y(ROW_HEIGHT),
                 );
             }
-            if !self.busy && self.patches.is_empty() {
-                content = content.push(action("重新读取组件", Message::Refresh, true));
-            }
-            for key in ["player-vc6", "bmlplus"] {
-                if let Some((i, _)) = self.patches.iter().enumerate().find(|(_, p)| p.key == key) {
-                    content = content.push(self.patch_row(
-                        i,
-                        if key == "bmlplus" {
-                            "BML+ 地图与模组支持"
-                        } else {
-                            "NewPlayer 兼容运行器"
-                        },
-                        if key == "bmlplus" {
-                            "提供自制地图和模组支持，安装时会补齐 NewPlayer 并停用旧版 BML。"
-                        } else {
-                            "替换游戏运行器，提供兼容修复和窗口、宽屏等设置。"
-                        },
-                    ));
-                }
-            }
-            let extra = self.section_open("其他组件", false);
-            content = content.push(self.config_heading("其他组件与兼容版本", "其他组件", extra));
-            if extra {
-                let mut rows = column![].spacing(8);
-                for (i, patch) in self
-                    .patches
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, p)| !["player-vc6", "bmlplus"].contains(&p.key.as_str()))
-                {
-                    rows = rows.push(self.patch_row(
-                        i,
-                        if patch.key == "bml" {
-                            "BML 旧版模组加载器"
-                        } else if patch.key == "player-msvc2022" {
-                            "NewPlayer 备用构建"
-                        } else {
-                            &patch.name
-                        },
-                        if patch.key == "bml" {
-                            "供旧版 BML 资源使用，安装后会停用 BML+。"
-                        } else {
-                            "这是 NewPlayer 的另一种构建，供兼容性排查时替换使用。"
-                        },
-                    ));
-                }
-                content = content.push(config_branch(rows.into()));
-            }
-            content = content.push(crate::hint::wrap(
-                action(
-                    "恢复原版关卡",
-                    Message::Prompt(PromptKind::Restore),
+            content = content.push(container(game).padding(16).style(style::menu));
+            let has_loader = instance
+                .components
+                .iter()
+                .any(|c| matches!(c.key.as_str(), "bml" | "bmlplus"));
+            if !has_loader {
+                content = content.push(
+                    text("这份游戏已可以游玩，添加 BML+ 后还可以安装自制地图和模组。").size(14),
+                );
+                content = content.push(action(
+                    "添加地图与模组支持",
+                    Message::EditComponents("bmlplus".into()),
                     !self.locked(),
-                ),
-                "恢复原版关卡模型并保留修改前的备份。",
+                ));
+            } else {
+                content = content.push(action("浏览地图和模组", Message::Page(Page::Hub), true));
+            }
+            content = content.push(separator()).push(action(
+                "恢复原版关卡",
+                Message::Prompt(PromptKind::Restore),
+                !self.locked(),
             ));
         }
         let fresh = self.section_open("安装新游戏", self.instance.is_none());
-        content = content.push(rule::horizontal(1)).push(self.config_heading(
-            "安装一份新游戏",
-            "安装新游戏",
-            fresh,
-        ));
+        if self.instance.is_some() {
+            content = content.push(separator());
+        }
+        content = content.push(self.config_heading("安装新游戏", "安装新游戏", fresh));
         if fresh {
             content = content.push(config_branch(
                 column![
-                    text("选择一个空文件夹安装新游戏。").size(14),
                     checkbox(self.install_player)
-                        .label("包含 NewPlayer 兼容修复")
+                        .label("NewPlayer")
                         .on_toggle(|p| Message::InstallChoice(p, p && self.install_bmlplus)),
                     checkbox(self.install_bmlplus)
-                        .label("包含 BML+ 地图与模组支持")
+                        .label("BML+")
                         .on_toggle(|b| Message::InstallChoice(self.install_player || b, b)),
-                    action("选择目录并安装游戏", Message::InstallGame, !self.locked())
+                    text("NewPlayer 修复游戏运行器的兼容问题，BML+ 依赖它来加载地图和模组。")
+                        .size(14),
+                    text("它们会和游戏一起安装到所选的空文件夹中。").size(14),
+                    action("选择目录并安装", Message::InstallGame, !self.locked())
                 ]
-                .spacing(8)
+                .spacing(10)
                 .into(),
             ));
         }
@@ -1666,7 +1692,7 @@ impl App {
                     .size(14),
                 );
             }
-            list = list.push(rule::horizontal(1));
+            list = list.push(separator());
         }
         scrollable(container(list).padding(iced::Padding {
             right: 16.0,
@@ -1689,7 +1715,6 @@ impl App {
             .collect();
         let slot = slots[prefs.level_slot.min(13) as usize].clone();
         let mut content = column![
-            text("外观与启动").size(16),
             self.preference_row(
                 "配色",
                 "",
@@ -1714,7 +1739,7 @@ impl App {
                 )
                 .into()
             ),
-            rule::horizontal(1),
+            separator(),
             self.preference_row("启动后隐藏窗口", "", toggle(prefs.hide_on_launch, "hide")),
             self.preference_row(
                 "退出自制地图后关闭游戏",
@@ -1749,7 +1774,7 @@ impl App {
             ),
         ]
         .spacing(0);
-        content = content.push(rule::horizontal(1)).push(
+        content = content.push(separator()).push(
             self.preference_row(
                 "累计游玩",
                 "",

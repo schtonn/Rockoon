@@ -56,7 +56,7 @@ fn captions(path: &Path) -> HashMap<&'static str, Caption> {
     if atlas.dimensions() != (512, 512) {
         return HashMap::new();
     }
-    ["Start", "Stop", "Starting...", "Browse"]
+    ["Start", "Stop", "Starting...", "Browse", "Config"]
         .into_iter()
         .filter_map(|label| bitmap_caption(&atlas, label).map(|caption| (label, caption)))
         .collect()

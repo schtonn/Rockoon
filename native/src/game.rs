@@ -21,6 +21,7 @@ pub struct Resource {
 #[derive(Clone, Debug)]
 pub struct Instance {
     pub visuals: crate::assets::GameAssets,
+    pub components: Vec<crate::components::Installed>,
     pub root: PathBuf,
     #[cfg(test)]
     pub maps: Vec<Resource>,
@@ -42,6 +43,7 @@ pub fn discover(root: PathBuf) -> Result<Instance, String> {
     }
     Ok(Instance {
         visuals: crate::assets::GameAssets::load(&root),
+        components: crate::components::scan(&root),
         #[cfg(test)]
         maps: list_resources(&root.join("ModLoader/Maps"), &["nmo", "cmo"], false)?,
         #[cfg(test)]

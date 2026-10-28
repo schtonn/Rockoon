@@ -35,14 +35,14 @@ impl Page {
     fn section(self) -> Self {
         match self {
             Self::Hub | Self::Local | Self::Maps | Self::Mods | Self::Assets => Self::Maps,
-            Self::Config | Self::Data | Self::Profiles => Self::Config,
-            Self::Install => Self::Home,
+            Self::Install | Self::Config | Self::Data | Self::Profiles => Self::Config,
             other => other,
         }
     }
     fn section_label(self) -> &'static str {
         match self.section() {
             Self::Maps => "资源",
+            Self::Config => "配置",
             Self::Tasks => "下载",
             other => other.label(),
         }
@@ -55,10 +55,10 @@ impl Page {
             Self::Maps => "地图",
             Self::Mods => "模组",
             Self::Assets => "素材",
-            Self::Config => "配置",
+            Self::Config => "选项",
             Self::Data => "存档",
-            Self::Profiles => "已保存的设置",
-            Self::Install => "游戏与组件",
+            Self::Profiles => "配置集",
+            Self::Install => "游戏",
             Self::Tasks => "任务",
             Self::Tas => "TAS",
             Self::Settings => "设置",
@@ -116,7 +116,6 @@ pub enum Message {
     Page(Page),
     CloseMenus,
     NoticeTick,
-    LatestVersion,
     Search(String),
     Refresh,
     Open(PathBuf),
@@ -167,9 +166,12 @@ pub enum Message {
     ProfilesLoaded(u64, Result<Value, String>),
     Profile(profiles::Action),
     Patches(u64, Result<Vec<Patch>, String>),
+    ComponentsScanned(u64, Result<Vec<crate::components::Installed>, String>),
     Versions(usize),
     VersionsLoaded(u64, Result<Vec<Version>, String>),
-    Version(Version),
+    Version(crate::components::ReleaseChoice),
+    EditComponents(String),
+    CancelComponents,
     InstallPatch(usize),
     InstallGame,
     InstallPicked(Option<PathBuf>),
@@ -297,7 +299,10 @@ pub struct App {
     session: Option<Instant>,
     search: String,
     notice: Option<Notice>,
-    version_menu: Option<usize>,
+    component_editor: bool,
+    component_target: String,
+    component_error: Option<String>,
+    versions_loading: bool,
     entries: Vec<Entry>,
     directory: PathBuf,
     asset_kind: Kind,
@@ -373,7 +378,10 @@ impl App {
             session: None,
             search: String::new(),
             notice: None,
-            version_menu: None,
+            component_editor: false,
+            component_target: "player-vc6".into(),
+            component_error: None,
+            versions_loading: false,
             entries: vec![],
             directory: PathBuf::new(),
             asset_kind: Kind::Skies,
@@ -494,7 +502,6 @@ impl App {
     }
     fn close_menus(&mut self) {
         self.entry_menu = None;
-        self.version_menu = None;
     }
     fn save_preferences(&self) -> Task<Message> {
         let prefs = self.preferences.clone();
@@ -578,17 +585,13 @@ impl App {
             }
             Page::Settings => return Task::perform(background(preferences::stats), Message::Stats),
             Page::Install => {
-                let root = self.root();
-                if root.is_none() {
-                    self.busy = false;
-                    self.patches.clear();
-                    return Task::none();
+                if let Some(root) = self.root() {
+                    self.busy = true;
+                    return Task::perform(
+                        background(move || Ok(crate::components::scan(&root))),
+                        move |r| Message::ComponentsScanned(revision, r),
+                    );
                 }
-                self.busy = true;
-                return Task::perform(
-                    background(move || jobs::for_instance(root.as_deref())),
-                    move |r| Message::Patches(revision, r),
-                );
             }
             _ => {}
         }
@@ -656,7 +659,6 @@ impl App {
                 | Message::Move(_)
                 | Message::FindConfig(_)
                 | Message::Version(_)
-                | Message::LatestVersion
                 | Message::InstallPatch(_)
                 | Message::Browse(_)
                 | Message::Page(_)
@@ -1414,9 +1416,48 @@ impl App {
                 if let Some(root) = self.root() {
                     return self.change(move || {
                         profiles::change(&root, action)?;
-                        Ok("已更新已保存的设置".into())
+                        Ok("已更新配置集".into())
                     });
                 }
+            }
+            Message::ComponentsScanned(revision, result) => {
+                if revision != self.revision {
+                    return Task::none();
+                }
+                self.busy = false;
+                match result {
+                    Ok(components) => {
+                        if let Some(instance) = &mut self.instance {
+                            instance.components = components;
+                        }
+                    }
+                    Err(e) => self.error(e),
+                }
+            }
+            Message::EditComponents(key) if !self.locked() => {
+                let Some(root) = self.root() else {
+                    return Task::none();
+                };
+                self.component_editor = true;
+                self.component_target = key;
+                self.component_error = None;
+                self.patch_index = None;
+                self.patches.clear();
+                self.versions.clear();
+                self.version = None;
+                self.busy = true;
+                self.revision += 1;
+                let revision = self.revision;
+                return Task::perform(
+                    background(move || jobs::for_instance(Some(&root))),
+                    move |r| Message::Patches(revision, r),
+                );
+            }
+            Message::CancelComponents => {
+                self.component_editor = false;
+                self.busy = false;
+                self.versions_loading = false;
+                self.revision += 1;
             }
             Message::Patches(revision, result) => {
                 if revision != self.revision {
@@ -1424,47 +1465,67 @@ impl App {
                 }
                 self.busy = false;
                 match result {
-                    Ok(patches) => self.patches = patches,
-                    Err(e) => self.error(e),
+                    Ok(patches) => {
+                        self.patches = patches;
+                        if self.component_editor {
+                            if let Some(index) = self
+                                .patches
+                                .iter()
+                                .position(|p| p.key == self.component_target)
+                                .or_else(|| (!self.patches.is_empty()).then_some(0))
+                            {
+                                return self.update(Message::Versions(index));
+                            }
+                            self.component_error = Some("暂时没有可安装的组件".into());
+                        }
+                    }
+                    Err(e) => self.component_error = Some(e),
                 }
             }
             Message::Versions(index) => {
-                if let Some(id) = self.patches.get(index).and_then(|p| p.package_id) {
-                    if self.patch_index != Some(index) {
-                        self.versions.clear();
-                        self.version = None;
-                    }
-                    self.close_menus();
-                    self.version_menu = Some(index);
+                if let Some(patch) = self.patches.get(index) {
+                    self.component_target = patch.key.clone();
                     self.patch_index = Some(index);
+                    self.versions.clear();
+                    self.version = None;
+                    self.component_error = None;
+                    self.versions_loading = true;
                     self.revision += 1;
                     let revision = self.revision;
-                    return Task::perform(background(move || jobs::versions(id)), move |r| {
-                        Message::VersionsLoaded(revision, r)
-                    });
+                    if let Some(id) = patch.package_id {
+                        return Task::perform(background(move || jobs::versions(id)), move |r| {
+                            Message::VersionsLoaded(revision, r)
+                        });
+                    }
+                    self.versions_loading = false;
+                    self.component_error = Some("这个组件暂时无法下载".into());
                 }
             }
             Message::VersionsLoaded(revision, result) => {
                 if revision == self.revision {
+                    self.versions_loading = false;
                     match result {
                         Ok(versions) => self.versions = versions,
-                        Err(e) => self.error(e),
+                        Err(e) => self.component_error = Some(e),
                     }
                 }
             }
-            Message::Version(version) => self.version = Some(version),
-            Message::LatestVersion => self.version = None,
+            Message::Version(choice) => {
+                self.version = match choice {
+                    crate::components::ReleaseChoice::Latest => None,
+                    crate::components::ReleaseChoice::Version(v) => Some(v),
+                }
+            }
             Message::InstallPatch(index) => {
+                if self.locked() || !self.component_editor || self.patch_index != Some(index) {
+                    return Task::none();
+                }
                 if let (Some(root), Some(patch)) = (self.root(), self.patches.get(index).cloned()) {
-                    let version = if self.patch_index == Some(index) {
-                        self.version.clone()
-                    } else {
-                        None
-                    };
+                    self.component_editor = false;
                     return self.start_job(Request::Patch {
                         root,
                         patch,
-                        version,
+                        version: self.version.clone(),
                     });
                 }
             }
@@ -1519,6 +1580,11 @@ impl App {
                     .iter()
                     .find(|j| j.id == id)
                     .map(|j| j.request.root().to_owned());
+                if self.jobs.iter().find(|j| j.id == id).is_some_and(|j| {
+                    matches!(j.request, Request::Game { .. } | Request::Patch { .. })
+                }) {
+                    self.page = Page::Install;
+                }
                 match result {
                     Ok(message) => self.notify(message),
                     Err(e) => self.error(e),
@@ -1536,9 +1602,6 @@ impl App {
                         background(move || game::discover(root)),
                         Message::Loaded,
                     );
-                }
-                if self.page == Page::Install {
-                    return self.reload();
                 }
                 if let Some(root) = root.filter(|r| self.root().as_ref() == Some(r)) {
                     let requested = root.clone();
@@ -2322,5 +2385,58 @@ impl App {
                 .push(iced::time::every(Duration::from_millis(50)).map(|_| Message::NoticeTick));
         }
         Subscription::batch(subscriptions)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn switching_component_or_cancelling_ignores_previous_version_response() {
+        let (mut app, _) = App::new();
+        app.component_editor = true;
+        app.patches = ["player-vc6", "bmlplus"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, key)| Patch {
+                key: key.into(),
+                name: key.into(),
+                install_target: "game".into(),
+                strip_top_level: false,
+                marker: "unused".into(),
+                package_id: Some(i as u64 + 1),
+                latest: "latest".into(),
+                installed: None,
+            })
+            .collect();
+        let _ = app.update(Message::Versions(0));
+        let old = app.revision;
+        let _ = app.update(Message::Version(crate::components::ReleaseChoice::Version(
+            Version {
+                version: 9,
+                note: Some("player version".into()),
+            },
+        )));
+        let _ = app.update(Message::Versions(1));
+        assert!(app.version.is_none());
+        let _ = app.update(Message::VersionsLoaded(
+            old,
+            Ok(vec![Version {
+                version: 9,
+                note: None,
+            }]),
+        ));
+        assert!(app.versions.is_empty());
+        let active = app.revision;
+        let _ = app.update(Message::CancelComponents);
+        let _ = app.update(Message::VersionsLoaded(
+            active,
+            Ok(vec![Version {
+                version: 10,
+                note: None,
+            }]),
+        ));
+        assert!(!app.component_editor);
+        assert!(app.versions.is_empty());
     }
 }

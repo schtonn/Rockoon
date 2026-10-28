@@ -430,9 +430,14 @@ impl Job {
                 .ok_or("补丁记录损坏")?
                 .retain(|k, _| !k.starts_with("player-"));
         }
-        let tag = version
-            .and_then(|v| v.note.clone())
-            .unwrap_or_else(|| patch.latest.clone());
+        let tag = match version {
+            Some(v) => v
+                .note
+                .clone()
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| format!("版本 #{}", v.version)),
+            None => patch.latest.clone(),
+        };
         record[&patch.key] = json!({"tag":tag,"at":workspace::id()});
         changes.push((
             record_path,
@@ -564,7 +569,7 @@ impl Job {
                 version,
             } => {
                 workspace::idle(root)?;
-                if patch.key == "bmlplus"
+                if matches!(patch.key.as_str(), "bml" | "bmlplus")
                     && fs::metadata(root.join("Bin/Player.exe"))
                         .map_err(error)?
                         .len()

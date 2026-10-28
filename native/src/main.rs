@@ -3,6 +3,7 @@
 mod app;
 mod assets;
 mod bounds;
+mod components;
 mod config;
 mod cover;
 mod game;

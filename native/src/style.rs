@@ -172,6 +172,11 @@ pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
 pub fn tab(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     nav(selected)
 }
+pub fn tabs(theme: &Theme) -> container::Style {
+    let mut style = menu(theme);
+    style.border.radius = 6.0.into();
+    style
+}
 pub fn menu(theme: &Theme) -> container::Style {
     let c = colors(theme);
     container::Style {

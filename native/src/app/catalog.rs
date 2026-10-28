@@ -438,11 +438,11 @@ impl App {
             .style(style::quiet)
             .on_press(message(Action::Open(package.id)));
         let authors = package.authors();
-        let metadata = if authors.is_empty() {
-            hub::size(package.file_size)
-        } else {
-            format!("{}  {}", short(&authors, 25), hub::size(package.file_size))
-        };
+        let metadata = row![
+            text(short(&authors, 25)).size(13).width(Fill),
+            text(hub::size(package.file_size)).size(13)
+        ]
+        .spacing(8);
         let busy = self.hub_busy(package.id);
         let installed = self.hub.installed(package);
         let label = if busy {
@@ -475,7 +475,7 @@ impl App {
                 .padding(0)
                 .style(style::quiet)
                 .on_press(message(Action::Open(package.id))),
-            container(column![title, text(metadata).size(13), actions].spacing(10)).padding(12)
+            container(column![title, metadata, actions].spacing(10)).padding(12)
         ]
         .spacing(0);
         container(content)
@@ -537,12 +537,11 @@ impl App {
             info = info.push(text(authors).size(14));
         }
         info = info.push(
-            text(format!(
-                "{}  {}",
-                category_label(&package.category),
-                hub::size(package.file_size)
-            ))
-            .size(14),
+            row![
+                text(category_label(&package.category)).size(14).width(Fill),
+                text(hub::size(package.file_size)).size(14)
+            ]
+            .spacing(8),
         );
         if !package.tags.is_empty() {
             info = info.push(

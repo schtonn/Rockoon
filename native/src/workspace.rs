@@ -148,6 +148,7 @@ pub struct Entry {
     pub path: PathBuf,
     pub name: String,
     pub directory: bool,
+    pub size: u64,
     pub disabled: bool,
 }
 pub fn list(root: &Path, kind: Kind, dir: &Path) -> Result<Vec<Entry>, String> {
@@ -174,6 +175,11 @@ pub fn list(root: &Path, kind: Kind, dir: &Path) -> Result<Vec<Entry>, String> {
                 name,
                 path: entry.path(),
                 directory,
+                size: if directory {
+                    0
+                } else {
+                    entry.metadata().map_err(error)?.len()
+                },
             });
         }
     }

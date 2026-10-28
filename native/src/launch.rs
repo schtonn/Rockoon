@@ -43,11 +43,29 @@ pub fn button<'a>(
     enabled: bool,
     message: Message,
 ) -> Element<'a, Message> {
+    sized_button(
+        normal,
+        selected,
+        caption,
+        enabled,
+        message,
+        Size::new(256.0, 64.0),
+    )
+}
+pub fn sized_button<'a>(
+    normal: image::Handle,
+    selected: image::Handle,
+    caption: Element<'a, Message>,
+    enabled: bool,
+    message: Message,
+    size: Size,
+) -> Element<'a, Message> {
     iced::widget::button(Element::new(Skin {
         normal,
         selected,
         caption,
         enabled,
+        size,
     }))
     .padding(0)
     .style(style::original_button)
@@ -94,6 +112,7 @@ struct Skin<'a> {
     selected: image::Handle,
     caption: Element<'a, Message>,
     enabled: bool,
+    size: Size,
 }
 impl Widget<Message, Theme, Renderer> for Skin<'_> {
     fn tag(&self) -> widget::tree::Tag {
@@ -109,7 +128,10 @@ impl Widget<Message, Theme, Renderer> for Skin<'_> {
         tree.diff_children(std::slice::from_ref(&self.caption));
     }
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Fixed(256.0), Length::Fixed(64.0))
+        Size::new(
+            Length::Fixed(self.size.width),
+            Length::Fixed(self.size.height),
+        )
     }
     fn layout(
         &mut self,
@@ -120,7 +142,7 @@ impl Widget<Message, Theme, Renderer> for Skin<'_> {
         self.caption.as_widget_mut().layout(
             &mut tree.children[0],
             renderer,
-            &limits.width(256).height(64),
+            &limits.width(self.size.width).height(self.size.height),
         )
     }
     fn update(
