@@ -41,5 +41,10 @@ licenses = list(dist.rglob("Rockoon-SourceHanSans-LICENSE.txt"))
 if len(licenses) != 1:
     raise SystemExit("Font license is missing or ambiguous")
 assets.append(str(licenses[0]))
-subprocess.run(["gh", "release", "create", tag, *assets, "--verify-tag", "--latest",
-                "--title", f"Rockoon Native {version}", "--notes-file", str(notes)], check=True)
+if os.environ.get("REPLACE_RELEASE_ASSETS") == "1":
+    # An explicitly moved tag replaces verified binaries without editing release text.
+    subprocess.run(["gh", "release", "view", tag], check=True)
+    subprocess.run(["gh", "release", "upload", tag, *assets, "--clobber"], check=True)
+else:
+    subprocess.run(["gh", "release", "create", tag, *assets, "--verify-tag", "--latest",
+                    "--title", f"Rockoon Native {version}", "--notes-file", str(notes)], check=True)

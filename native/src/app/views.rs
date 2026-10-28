@@ -1213,10 +1213,12 @@ impl App {
             .get(&(field.key.clone(), field.group.clone()))
             .is_some_and(|value| *value != field.value);
         if !changed {
-            return space().width(24).into();
+            return space().width(24).height(24).into();
         }
         button(crate::icons::view(crate::icons::Icon::Undo, 15.0))
             .padding(4)
+            .width(24)
+            .height(24)
             .style(style::quiet)
             .on_press_maybe((!self.locked()).then_some(Message::RestoreField(i)))
             .into()
@@ -2476,5 +2478,51 @@ impl iced::widget::canvas::Program<Message> for FolderIcon {
                 .with_width(1.5),
         );
         vec![frame.into_geometry()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::advanced::{Layout, layout, widget::Tree};
+
+    #[test]
+    fn showing_undo_keeps_configuration_labels_and_controls_in_place() {
+        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let (mut app, _) = App::new();
+        let limits = layout::Limits::new(iced::Size::ZERO, iced::Size::new(500.0, 100.0));
+        for (key, value, boolean) in [
+            ("FullScreen", "1", true),
+            ("/keyForward", "57", false),
+            ("/volume", "0.7", false),
+            ("Width", "1920", false),
+            ("Language", "1", false),
+        ] {
+            let field = config::Field {
+                key: key.into(),
+                label: "Configuration field".into(),
+                group: "General".into(),
+                value: value.into(),
+                boolean,
+                number: !boolean,
+                line: None,
+                prefix: String::new(),
+            };
+            let measure = |app: &App| {
+                let mut row = app.configuration_field(0, &field);
+                let mut tree = Tree::new(row.as_widget());
+                let node = row.as_widget_mut().layout(&mut tree, &renderer, &limits);
+                let row = Layout::new(&node);
+                let mut bounds: Vec<_> = row.children().map(|child| child.bounds()).collect();
+                bounds.extend(row.child(0).children().map(|child| child.bounds()));
+                bounds
+            };
+            let before = measure(&app);
+            app.undo_values.insert(
+                (field.key.clone(), field.group.clone()),
+                "previous value".into(),
+            );
+            assert_eq!(before, measure(&app), "undo changed the layout of {key}");
+        }
     }
 }

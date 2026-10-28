@@ -36,6 +36,7 @@ pub fn context<'a>(
 }
 #[derive(Default)]
 struct Pointer {
+    // Scrollables deliver pointer events in content coordinates, like layout.
     at: Option<Point>,
 }
 struct Popup<'a> {
@@ -186,7 +187,8 @@ impl Widget<Message, Theme, Renderer> for Popup<'_> {
                     .state
                     .downcast_ref::<Pointer>()
                     .at
-                    .unwrap_or(layout.position());
+                    .unwrap_or(layout.position())
+                    + translation;
                 Rectangle::new(at, Size::ZERO)
             } else {
                 layout.bounds() + translation
@@ -355,5 +357,109 @@ impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_, '_> {
             &layout.bounds(),
             Vector::ZERO,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::advanced::widget::operation::scrollable::{AbsoluteOffset, scroll_to};
+    use iced::widget::{button, column, scrollable, space};
+
+    #[test]
+    fn scrolled_resource_menus_open_at_the_window_pointer() {
+        let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let viewport = Rectangle::new(Point::new(40.0, 100.0), Size::new(640.0, 300.0));
+        let pointer = Point::new(180.0, 148.0);
+        for (offset, mouse_button) in [
+            (0.0, mouse::Button::Right),
+            (240.0, mouse::Button::Right),
+            (1800.0, mouse::Button::Right),
+            (1800.0, mouse::Button::Left),
+        ] {
+            let resource = std::path::PathBuf::from("Textures/Sky/Sky_A_Front.bmp");
+            let build = |open: bool| -> Element<'_, Message> {
+                scrollable(column![
+                    space().height(offset + 32.0),
+                    context(
+                        button(space().width(Length::Fill).height(34))
+                            .padding(0)
+                            .on_press(Message::EntryMenu(resource.clone())),
+                        open.then(|| space().width(156).height(120).into()),
+                        Message::EntryMenu(resource.clone()),
+                    ),
+                    space().height(1000),
+                ])
+                .width(viewport.width)
+                .height(viewport.height)
+                .id("resources")
+                .into()
+            };
+            let mut content = build(false);
+            let mut tree = Tree::new(content.as_widget());
+            let limits = layout::Limits::new(Size::ZERO, viewport.size());
+            let node = content
+                .as_widget_mut()
+                .layout(&mut tree, &renderer, &limits)
+                .move_to(viewport.position());
+            content.as_widget_mut().operate(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &mut scroll_to::<()>(
+                    "resources".into(),
+                    AbsoluteOffset {
+                        x: None,
+                        y: Some(offset),
+                    },
+                ),
+            );
+            let mut messages = Vec::new();
+            for event in [
+                mouse::Event::ButtonPressed(mouse_button),
+                mouse::Event::ButtonReleased(mouse_button),
+            ] {
+                content.as_widget_mut().update(
+                    &mut tree,
+                    &Event::Mouse(event),
+                    Layout::new(&node),
+                    mouse::Cursor::Available(pointer),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &viewport,
+                );
+            }
+            assert!(
+                messages.iter().any(
+                    |message| matches!(message, Message::EntryMenu(path) if path == &resource)
+                )
+            );
+            content = build(true);
+            tree.diff(content.as_widget());
+            let node = content
+                .as_widget_mut()
+                .layout(&mut tree, &renderer, &limits)
+                .move_to(viewport.position());
+            let mut overlay = content
+                .as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &viewport,
+                    Vector::ZERO,
+                )
+                .expect("a visible resource must retain its context menu after scrolling");
+            let menu = overlay
+                .as_overlay_mut()
+                .layout(&renderer, Size::new(800.0, 600.0));
+            let mut menu = &menu;
+            while menu.children().len() == 1 {
+                menu = &menu.children()[0];
+            }
+            assert_eq!(menu.bounds().position(), pointer + Vector::new(0.0, 5.0));
+            assert_eq!(menu.size(), Size::new(156.0, 120.0));
+        }
     }
 }
