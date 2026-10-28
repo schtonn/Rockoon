@@ -36,6 +36,13 @@ impl Camera {
     pub fn factor(self, depth: f32) -> f32 {
         90.0 / (90.0 - depth).max(10.0)
     }
+    pub fn plane_vector(self, dx: f32, dy: f32, depth: f32) -> V {
+        let unit = 1.0 / (self.scale * self.factor(depth));
+        self.right * (dx * unit) - self.up * (dy * unit)
+    }
+    pub fn in_plane(self, vector: V) -> V {
+        vector - self.depth * vector.dot(self.depth)
+    }
     pub fn ceiling(self, x: f32, z: f32) -> f32 {
         let target = (self.height * 0.60 + 60.0) / self.scale;
         let base = V(x, 0.0, z);

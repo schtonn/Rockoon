@@ -37,6 +37,7 @@ pub const PROFILES: [Profile; 3] = [
 ];
 #[derive(Clone, Debug)]
 pub struct Body {
+    pub id: u64,
     pub kind: usize,
     pub position: V,
     pub velocity: V,
@@ -56,7 +57,13 @@ impl Body {
         self.rotation.advance(self.angular, dt);
     }
 }
+struct Drag {
+    id: u64,
+    mouse: (f32, f32),
+    offset: (f32, f32),
+}
 pub struct World {
+    drag: Option<Drag>,
     pub platform: Option<Arc<Collider>>,
     pub bodies: Vec<Body>,
     seed: u64,
@@ -68,6 +75,7 @@ impl World {
     pub fn new(seed: u64) -> Self {
         Self {
             platform: None,
+            drag: None,
             bodies: Vec::new(),
             seed,
             serial: 0,
@@ -106,6 +114,7 @@ impl World {
         let mut rotation = Q::default();
         rotation.advance(angular, 8.0);
         self.bodies.push(Body {
+            id: self.serial as u64,
             kind,
             position,
             velocity,
@@ -114,6 +123,60 @@ impl World {
         });
         self.serial += 1;
         self.next = 1.15 + self.random() * 0.65;
+    }
+    pub fn picked(&self, camera: Camera, x: f32, y: f32) -> Option<u64> {
+        self.bodies
+            .iter()
+            .filter(|body| {
+                let p = camera.project(body.position);
+                let r = RADIUS * camera.scale * camera.factor(p.2);
+                (p.0 - x).powi(2) + (p.1 - y).powi(2) <= r * r
+            })
+            .max_by(|a, b| {
+                camera
+                    .vector(a.position)
+                    .2
+                    .total_cmp(&camera.vector(b.position).2)
+            })
+            .map(|b| b.id)
+    }
+    pub fn grab(&mut self, camera: Camera, x: f32, y: f32) -> bool {
+        let Some(id) = self.picked(camera, x, y) else {
+            return false;
+        };
+        let p = camera.project(self.bodies.iter().find(|b| b.id == id).unwrap().position);
+        self.drag = Some(Drag {
+            id,
+            mouse: (x, y),
+            offset: (x - p.0, y - p.1),
+        });
+        true
+    }
+    pub fn move_pointer(&mut self, x: f32, y: f32) {
+        if let Some(drag) = &mut self.drag {
+            drag.mouse = (x, y);
+        }
+    }
+    pub fn release(&mut self) {
+        self.drag = None;
+    }
+    pub fn dragging(&self) -> bool {
+        self.drag.is_some()
+    }
+    fn drag_force(&self, camera: Camera, body: &Body) -> V {
+        let Some(drag) = self.drag.as_ref().filter(|d| d.id == body.id) else {
+            return V::default();
+        };
+        let p = camera.project(body.position);
+        let displacement = camera.plane_vector(
+            drag.mouse.0 - drag.offset.0 - p.0,
+            drag.mouse.1 - drag.offset.1 - p.1,
+            p.2,
+        );
+        // Hooke's law in the camera plane, with mass-dependent damping for a stable spring.
+        let stiffness = 80.0;
+        displacement * stiffness
+            - camera.in_plane(body.velocity) * (1.5 * (stiffness * PROFILES[body.kind].mass).sqrt())
     }
     pub fn advance(&mut self, dt: f32, width: f32, height: f32) {
         let camera = Camera::new(width, height);
@@ -125,7 +188,13 @@ impl World {
             if self.next <= 0.0 && self.bodies.len() < 12 {
                 self.spawn(camera);
             }
-            for b in &mut self.bodies {
+            let forces: Vec<_> = self
+                .bodies
+                .iter()
+                .map(|b| self.drag_force(camera, b))
+                .collect();
+            for (b, force) in self.bodies.iter_mut().zip(forces) {
+                b.velocity = b.velocity + force * (STEP / PROFILES[b.kind].mass);
                 b.integrate(STEP);
             }
             for _ in 0..3 {
@@ -141,7 +210,9 @@ impl World {
                     }
                 }
             }
-            self.bodies.retain(|b| camera.visible(b.position));
+            let held = self.drag.as_ref().map(|d| d.id);
+            self.bodies
+                .retain(|b| Some(b.id) == held || camera.visible(b.position));
         }
     }
     /// Bounded render prediction smooths the 66 Hz steps at the display's cadence.
@@ -316,11 +387,41 @@ mod tests {
     use super::*;
     fn body(kind: usize, x: f32, vx: f32) -> Body {
         Body {
+            id: 0,
             kind,
             position: V(x, 0.0, 0.0),
             velocity: V(vx, 0.0, 0.0),
             angular: V::default(),
             rotation: Q::default(),
+        }
+    }
+    #[test]
+    fn mouse_spring_is_planar_proportional_and_releases_with_inertia() {
+        let camera = Camera::new(876.0, 700.0);
+        for kind in 0..3 {
+            let mut world = World::new(42);
+            let mut ball = body(kind, 0.0, 0.0);
+            ball.position = V(0.0, 8.0, 0.0);
+            world.bodies.push(ball);
+            let p = camera.project(world.bodies[0].position);
+            assert!(world.grab(camera, p.0, p.1));
+            world.move_pointer(p.0 + 40.0, p.1);
+            let first = world.drag_force(camera, &world.bodies[0]);
+            world.move_pointer(p.0 + 80.0, p.1);
+            let second = world.drag_force(camera, &world.bodies[0]);
+            assert!((second - first * 2.0).length() < 0.001);
+            assert!((camera.in_plane(second) - second).length() < 0.001);
+            world.next = 100.0;
+            for _ in 0..20 {
+                world.advance(STEP, 876.0, 700.0);
+            }
+            let held = world.bodies.iter().find(|b| b.id == 0).unwrap();
+            assert!(camera.project(held.position).0 > p.0 + 10.0);
+            let velocity = held.velocity;
+            world.release();
+            assert!(!world.dragging());
+            assert!((world.bodies[0].velocity - velocity).length() < 0.001);
+            assert_eq!(world.drag_force(camera, &world.bodies[0]).length(), 0.0);
         }
     }
     #[test]

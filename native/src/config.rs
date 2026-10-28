@@ -125,6 +125,127 @@ fn label(key: &str) -> String {
     }
     .into()
 }
+fn ini_boolean(key: &str, value: &str) -> bool {
+    matches!(value.to_ascii_lowercase().as_str(), "true" | "false")
+        || matches!(value, "0" | "1")
+            && matches!(
+                key,
+                "FullScreen"
+                    | "Borderless"
+                    | "ClipCursor"
+                    | "AlwaysHandleInput"
+                    | "ChildWindowRendering"
+                    | "SkipOpening"
+                    | "UnlockFramerate"
+                    | "UnlockWidescreen"
+                    | "UnlockHighResolution"
+                    | "ApplyHotfix"
+                    | "Rookie"
+                    | "Verbose"
+                    | "ManualSetup"
+                    | "Debug"
+                    | "LogMode"
+                    | "DisableDithering"
+                    | "DisableSpecular"
+                    | "DisableMipmap"
+                    | "DisablePerspectiveCorrection"
+                    | "ForceLinearFog"
+                    | "ForceSoftware"
+                    | "DisableFilter"
+                    | "EnsureVertexShader"
+                    | "UseIndexBuffers"
+                    | "SortTransparentObjects"
+                    | "TextureCacheManagement"
+                    | "EnableDebugMode"
+                    | "EnableScreenDump"
+            )
+}
+impl Field {
+    pub fn enabled(&self) -> bool {
+        matches!(
+            self.value.to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    }
+    pub fn toggled(&self, enabled: bool) -> String {
+        if matches!(self.value.as_str(), "0" | "1") {
+            if enabled { "1" } else { "0" }
+        } else {
+            if enabled { "true" } else { "false" }
+        }
+        .into()
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Choice(pub String);
+impl std::fmt::Display for Choice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self.0.as_str() {
+            "游戏设置" => "游戏设置",
+            "BML.cfg" => "加载器设置",
+            "CameraUtilities.cfg" => "相机工具",
+            "DebugUtilities.cfg" => "调试工具",
+            _ => &self.0,
+        })
+    }
+}
+pub fn group_label(group: &str) -> &str {
+    match group {
+        "GUI" => "游戏内菜单",
+        "HUD" => "游戏内信息",
+        "Graphics" => "渲染设置",
+        "Tweak" => "辅助功能",
+        "Misc" => "其他",
+        "Camera" => "相机",
+        "Debug" => "调试",
+        "Auxiliaries" => "临时辅助物体",
+        "General" => "常规",
+        _ => group,
+    }
+}
+impl Document {
+    pub fn field_help(&self, field: &Field) -> Option<String> {
+        if self.source == Source::Game {
+            return self.parts.iter().find_map(|part| {
+                part.fields
+                    .iter()
+                    .find(|f| f.key == field.key)
+                    .and_then(|f| part.field_help(f))
+            });
+        }
+        let end = field.line?;
+        let mut comments: Vec<_> = self
+            .lines
+            .get(..end)?
+            .iter()
+            .rev()
+            .skip_while(|s| s.trim().is_empty())
+            .take_while(|s| s.trim().starts_with(['#', ';']))
+            .map(|s| s.trim().trim_start_matches(['#', ';']).trim())
+            .collect();
+        comments.reverse();
+        let text = comments.join(" ");
+        let text = text
+            .split(". ")
+            .next()
+            .unwrap_or("")
+            .split('。')
+            .next()
+            .unwrap_or("")
+            .replace('；', "，")
+            .replace(';', ",");
+        (!text.is_empty()).then_some(text)
+    }
+}
+pub fn source_help(name: &str) -> &'static str {
+    match name {
+        "游戏设置" => "包含原版游戏设置和 NewPlayer 的窗口与兼容参数。",
+        "BML.cfg" => "调整加载器的菜单、游戏内信息和帧率等功能。",
+        "CameraUtilities.cfg" => "配置相机工具的移动、旋转和重置功能。",
+        "DebugUtilities.cfg" => "配置调试工具的重置球、切换球种等功能。",
+        _ => "这是所选模组的独立配置。",
+    }
+}
 pub fn load(root: &Path, source: Source) -> Result<Document, String> {
     let mut doc = Document {
         source: source.clone(),
@@ -195,7 +316,7 @@ pub fn load(root: &Path, source: Source) -> Result<Document, String> {
                             doc.fields.push(Field {
                                 key: format!("/highscores/{level}/{rank}/{key}"),
                                 label: format!(
-                                    "第 {} 名 · {}",
+                                    "第 {} 名{}",
                                     rank + 1,
                                     if key == "player" { "玩家" } else { "分数" }
                                 ),
@@ -244,7 +365,7 @@ pub fn load(root: &Path, source: Source) -> Result<Document, String> {
                             key.to_owned(),
                             v.to_owned(),
                             format!("{}=", line.split_once('=').unwrap().0),
-                            matches!(v.to_lowercase().as_str(), "true" | "false"),
+                            ini_boolean(key, v),
                             v.parse::<f64>().is_ok(),
                         )
                     } else {
@@ -495,6 +616,82 @@ pub fn ini_text(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn editing_one_level_preserves_other_level_rankings() {
+        let fixture = game_fixture();
+        let before = options(fixture.path()).unwrap();
+        let mut doc = load(fixture.path(), Source::Data).unwrap();
+        doc.fields
+            .iter_mut()
+            .find(|f| f.key == "/highscores/3/0/player")
+            .unwrap()
+            .value = "Native test".into();
+        doc.fields
+            .iter_mut()
+            .find(|f| f.key == "/highscores/3/0/score")
+            .unwrap()
+            .value = "4321".into();
+        doc.fields
+            .iter_mut()
+            .find(|f| f.key == "/levelLock/3")
+            .unwrap()
+            .value = "true".into();
+        doc.save(fixture.path()).unwrap();
+        let after = options(fixture.path()).unwrap();
+        assert_eq!(after["highscores"][3][0]["player"], "Native test");
+        assert_eq!(after["highscores"][3][0]["score"], 4321);
+        assert_eq!(after["levelLock"][3], true);
+        for level in 0..13 {
+            if level != 3 {
+                assert_eq!(after["highscores"][level], before["highscores"][level]);
+            }
+        }
+    }
+    #[test]
+    fn merged_game_fields_read_help_from_their_own_source() {
+        let fixture = game_fixture();
+        fs::write(
+            fixture.path().join("Bin/Player.ini"),
+            "[Game]\n; Only affects startup\nSkipOpening=1\n",
+        )
+        .unwrap();
+        let doc = load(fixture.path(), Source::Game).unwrap();
+        for field in &doc.fields {
+            let _ = doc.field_help(field);
+        }
+        let field = doc.fields.iter().find(|f| f.key == "SkipOpening").unwrap();
+        assert_eq!(
+            doc.field_help(field).as_deref(),
+            Some("Only affects startup")
+        );
+    }
+    #[test]
+    fn numeric_ini_flags_keep_encoding_and_preserve_numeric_parameters() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Player.ini");
+        fs::write(&path, "[Graphics]\nFullScreen=0\nWidth=1\nAntialias=0\n[Game]\nLanguage=1\nSkipOpening=1\n[Startup]\nLogMode=1\n").unwrap();
+        let mut doc = load(root.path(), Source::File(path.clone())).unwrap();
+        for field in &mut doc.fields {
+            if ["FullScreen", "SkipOpening", "LogMode"].contains(&field.key.as_str()) {
+                assert!(field.boolean, "{} should be a switch", field.key);
+                field.value = field.toggled(!field.enabled());
+            } else {
+                assert!(!field.boolean, "{} must remain numeric", field.key);
+            }
+        }
+        doc.save(root.path()).unwrap();
+        let saved = fs::read_to_string(path).unwrap();
+        assert!(
+            saved.contains("FullScreen=1")
+                && saved.contains("SkipOpening=0")
+                && saved.contains("LogMode=0")
+        );
+        assert!(
+            saved.contains("Width=1")
+                && saved.contains("Language=1")
+                && saved.contains("Antialias=0")
+        );
+    }
     #[test]
     fn real_database_edit_preserves_unrelated_tables_and_scores() {
         use rockoon_core::tdb::{Tdb, VtColumn, VtValue, VtValueType};

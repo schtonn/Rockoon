@@ -330,7 +330,7 @@ impl App {
         }
         let search = widget::text_input("搜索名称、作者或简介", &self.hub.query.text)
             .size(14)
-            .padding(9)
+            .padding(6)
             .style(style::input)
             .on_input(|s| message(Action::Search(s)))
             .on_submit(message(Action::Submit));
@@ -444,7 +444,7 @@ impl App {
         let metadata = if authors.is_empty() {
             hub::size(package.file_size)
         } else {
-            format!("{} · {}", short(&authors, 25), hub::size(package.file_size))
+            format!("{}  {}", short(&authors, 25), hub::size(package.file_size))
         };
         let busy = self.hub_busy(package.id);
         let installed = self.hub.installed(package);
@@ -543,7 +543,7 @@ impl App {
         }
         info = info.push(
             text(format!(
-                "{} · {}",
+                "{}  {}",
                 category_label(&package.category),
                 hub::size(package.file_size)
             ))
@@ -558,7 +558,7 @@ impl App {
                         .take(12)
                         .cloned()
                         .collect::<Vec<_>>()
-                        .join(" · "),
+                        .join("  "),
                 )
                 .size(14),
             );
@@ -604,9 +604,15 @@ impl App {
         }
         if package.category == "sky" {
             info = info.push(
-                row![text("安装到").size(14), self.sky_picker()]
-                    .spacing(12)
-                    .align_y(Alignment::Center),
+                row![
+                    crate::hint::label(
+                        "天空盒应用到",
+                        "选择要替换天空背景的关卡，自制地图使用 X。"
+                    ),
+                    self.sky_picker()
+                ]
+                .spacing(12)
+                .align_y(Alignment::Center),
             );
         }
         if self.root().is_none() {
@@ -760,7 +766,8 @@ fn picker<'a, T: Clone + PartialEq + std::fmt::Display + 'a>(
 ) -> widget::PickList<'a, T, Vec<T>, T, Message> {
     widget::pick_list(options, Some(selected), on_select)
         .text_size(14)
-        .padding(9)
+        .padding(6)
+        .width(184)
         .style(style::select)
         .menu_style(style::select_menu)
 }

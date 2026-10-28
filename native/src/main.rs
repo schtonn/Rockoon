@@ -6,6 +6,7 @@ mod bounds;
 mod config;
 mod cover;
 mod game;
+mod hint;
 mod home_balls;
 mod hub;
 mod icons;

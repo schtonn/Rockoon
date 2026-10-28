@@ -325,3 +325,19 @@ pub fn catalog_placeholder(theme: &Theme) -> container::Style {
         ..Default::default()
     }
 }
+
+pub fn toggle(
+    theme: &Theme,
+    status: iced::widget::toggler::Status,
+) -> iced::widget::toggler::Style {
+    use iced::widget::toggler::{self, Status};
+    let c = colors(theme);
+    let mut style = toggler::default(theme, status);
+    let active = matches!(
+        status,
+        Status::Active { is_toggled: true } | Status::Hovered { is_toggled: true }
+    );
+    style.background = if active { c.solid } else { c.line }.into();
+    style.foreground = if active { c.on_solid } else { c.text }.into();
+    style
+}

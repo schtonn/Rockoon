@@ -137,13 +137,14 @@ impl std::fmt::Display for Kind {
             Self::Maps => "地图",
             Self::Mods => "模组",
             Self::Skies => "天空盒",
-            Self::Textures => "材质",
+            Self::Textures => "纹理",
             Self::Sounds => "音效",
         })
     }
 }
 #[derive(Clone, Debug)]
 pub struct Entry {
+    pub kind: Kind,
     pub path: PathBuf,
     pub name: String,
     pub directory: bool,
@@ -168,6 +169,7 @@ pub fn list(root: &Path, kind: Kind, dir: &Path) -> Result<Vec<Entry>, String> {
         let directory = entry.file_type().map_err(error)?.is_dir();
         if directory || kind.accepts(&name) {
             entries.push(Entry {
+                kind,
                 disabled: name.to_lowercase().ends_with(".disable"),
                 name,
                 path: entry.path(),
@@ -177,6 +179,45 @@ pub fn list(root: &Path, kind: Kind, dir: &Path) -> Result<Vec<Entry>, String> {
     }
     entries.sort_by_key(|e| (!e.directory, e.name.to_lowercase()));
     Ok(entries)
+}
+/// Flatten known local resource roots without duplicate sky textures or following links.
+pub fn collection(root: &Path) -> Result<Vec<Entry>, String> {
+    let mut result = Vec::new();
+    for kind in [
+        Kind::Maps,
+        Kind::Mods,
+        Kind::Skies,
+        Kind::Textures,
+        Kind::Sounds,
+    ] {
+        let base = root.join(kind.dir());
+        let mut pending = vec![(base.clone(), 0usize)];
+        while let Some((dir, depth)) = pending.pop() {
+            if depth > 32 {
+                return Err("资源目录层级超过 32 层".into());
+            }
+            for mut entry in list(root, kind, &dir)? {
+                if kind == Kind::Textures && entry.path.starts_with(root.join("Textures/Sky")) {
+                    continue;
+                }
+                if entry.directory {
+                    pending.push((entry.path, depth + 1));
+                } else {
+                    entry.name = format!(
+                        "{} / {}",
+                        kind,
+                        entry.path.strip_prefix(&base).map_err(error)?.display()
+                    );
+                    result.push(entry);
+                    if result.len() > 20000 {
+                        return Err("资源数量超过 20000，请选择具体类型浏览".into());
+                    }
+                }
+            }
+        }
+    }
+    result.sort_by_cached_key(|e| e.name.to_lowercase());
+    Ok(result)
 }
 pub fn matches(name: &str, query: &str) -> bool {
     let name = name.to_lowercase();
@@ -341,6 +382,29 @@ pub fn brp_files(root: &Path, archive: &Path, sky: &str) -> Result<(String, Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn all_resources_include_nested_files_and_do_not_duplicate_sky_textures() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "ModLoader/Maps/nested/test.nmo",
+            "ModLoader/Mods/test.bmodp",
+            "Textures/Sky/Sky_A_Front.bmp",
+            "Textures/Ball_Wood.bmp",
+            "Sounds/test.wav",
+        ] {
+            let path = dir.path().join(name);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, b"fixture").unwrap();
+        }
+        let entries = collection(dir.path()).unwrap();
+        assert_eq!(entries.len(), 5);
+        assert_eq!(entries.iter().filter(|e| e.kind == Kind::Skies).count(), 1);
+        assert_eq!(
+            entries.iter().filter(|e| e.kind == Kind::Textures).count(),
+            1
+        );
+        assert!(entries.iter().any(|e| e.name.contains("nested")));
+    }
     #[test]
     fn search_normalizes_extensions_and_word_order() {
         assert!(matches("Sky Return.NMO.disable", "return sky"));

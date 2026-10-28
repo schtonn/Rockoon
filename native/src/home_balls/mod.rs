@@ -166,7 +166,7 @@ impl Widget<Message, Theme, Renderer> for Scene {
         tree: &mut Tree,
         event: &Event,
         layout: Layout<'_>,
-        _: mouse::Cursor,
+        cursor: mouse::Cursor,
         _: &Renderer,
         _: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
@@ -183,6 +183,9 @@ impl Widget<Message, Theme, Renderer> for Scene {
             state.world.platform = self.assets.platform.as_ref().map(|p| p.collider.clone());
         }
         let size = layout.bounds().size();
+        if size != state.size {
+            state.world.release();
+        }
         if size != state.size && size.width > 0.0 && size.height > 0.0 {
             (state.tiles, state.background) = sky_tiles(&self.sky, size);
             state.platform = self
@@ -195,8 +198,39 @@ impl Widget<Message, Theme, Renderer> for Scene {
             state.size = size;
         }
         if !self.active {
+            state.world.release();
             state.last = None;
             return;
+        }
+        let bounds = layout.bounds();
+        let camera = camera::Camera::new(size.width, size.height);
+        match event {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if !shell.is_event_captured() && cursor.is_over(bounds) =>
+            {
+                if let Some(p) = cursor.position()
+                    && state.world.grab(camera, p.x - bounds.x, p.y - bounds.y)
+                {
+                    shell.capture_event();
+                    shell.request_redraw();
+                }
+            }
+            Event::Mouse(mouse::Event::CursorMoved { position }) if state.world.dragging() => {
+                state
+                    .world
+                    .move_pointer(position.x - bounds.x, position.y - bounds.y);
+                shell.capture_event();
+                shell.request_redraw();
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.world.dragging() =>
+            {
+                state.world.release();
+                shell.capture_event();
+            }
+            Event::Mouse(mouse::Event::CursorLeft)
+            | Event::Window(iced::window::Event::Unfocused) => state.world.release(),
+            _ => {}
         }
         if let Event::Window(iced::window::Event::RedrawRequested(now)) = event {
             let size = layout.bounds().size();
@@ -271,6 +305,39 @@ impl Widget<Message, Theme, Renderer> for Scene {
                 .map(|last| last + FRAME)
                 .unwrap_or_else(Instant::now),
         );
+    }
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        _: &Rectangle,
+        _: &Renderer,
+    ) -> mouse::Interaction {
+        if !self.active {
+            return mouse::Interaction::default();
+        }
+        let state = tree.state.downcast_ref::<Motion>();
+        if state.world.dragging() {
+            return mouse::Interaction::Grabbing;
+        }
+        let bounds = layout.bounds();
+        if cursor.is_over(bounds)
+            && cursor.position().is_some_and(|p| {
+                state
+                    .world
+                    .picked(
+                        camera::Camera::new(bounds.width, bounds.height),
+                        p.x - bounds.x,
+                        p.y - bounds.y,
+                    )
+                    .is_some()
+            })
+        {
+            mouse::Interaction::Grab
+        } else {
+            mouse::Interaction::default()
+        }
     }
     fn draw(
         &self,

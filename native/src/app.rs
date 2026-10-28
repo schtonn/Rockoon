@@ -19,6 +19,7 @@ mod views;
 pub enum Page {
     Home,
     Hub,
+    Local,
     Maps,
     Mods,
     Assets,
@@ -33,7 +34,7 @@ pub enum Page {
 impl Page {
     fn section(self) -> Self {
         match self {
-            Self::Hub | Self::Maps | Self::Mods | Self::Assets => Self::Maps,
+            Self::Hub | Self::Local | Self::Maps | Self::Mods | Self::Assets => Self::Maps,
             Self::Config | Self::Data | Self::Profiles => Self::Config,
             Self::Install | Self::Tasks => Self::Tasks,
             other => other,
@@ -50,13 +51,14 @@ impl Page {
         match self {
             Self::Home => "Ballance",
             Self::Hub => "在线",
+            Self::Local => "本地",
             Self::Maps => "地图",
             Self::Mods => "模组",
             Self::Assets => "素材",
             Self::Config => "配置",
             Self::Data => "存档",
-            Self::Profiles => "方案",
-            Self::Install => "安装",
+            Self::Profiles => "配置预设",
+            Self::Install => "游戏与组件",
             Self::Tasks => "任务",
             Self::Tas => "TAS",
             Self::Settings => "设置",
@@ -123,7 +125,7 @@ pub enum Message {
     EntryMenu(PathBuf),
     Browse(PathBuf),
     Listed(u64, Result<Vec<Entry>, String>),
-    ResourceKind(Kind),
+    ResourceCategory(crate::hub::Category),
     ResourceSource(bool),
     Import,
     FilesPicked(Vec<PathBuf>),
@@ -157,10 +159,10 @@ pub enum Message {
     FindConfig(PathBuf),
     FoundConfig(Result<PathBuf, String>),
     UnlockAll,
+    ResetLevel(usize),
     SelectConfig(String),
     DocumentLoaded(u64, Result<(Document, Vec<PathBuf>), String>),
-    Group(String),
-    ConfigSection(String),
+    ConfigSection(String, bool),
     Field(usize, String),
     SaveDocument,
     ProfilesLoaded(u64, Result<Value, String>),
@@ -300,7 +302,7 @@ pub struct App {
     entries: Vec<Entry>,
     directory: PathBuf,
     asset_kind: Kind,
-    local_kind: Kind,
+    local_category: crate::hub::Category,
     document: Option<Document>,
     config_files: Vec<PathBuf>,
     config_name: String,
@@ -377,7 +379,7 @@ impl App {
             entries: vec![],
             directory: PathBuf::new(),
             asset_kind: Kind::Skies,
-            local_kind: Kind::Maps,
+            local_category: crate::hub::Category::Map,
             document: None,
             config_files: vec![],
             config_name: "游戏设置".into(),
@@ -453,6 +455,23 @@ impl App {
             _ => None,
         }
     }
+    fn select_local_category(&mut self, category: crate::hub::Category) -> Task<Message> {
+        self.local_category = category;
+        self.directory = PathBuf::new();
+        let page = match category.local_kind() {
+            Some(Kind::Maps) => Page::Maps,
+            Some(Kind::Mods) => Page::Mods,
+            Some(kind) => {
+                self.asset_kind = kind;
+                Page::Assets
+            }
+            None => Page::Local,
+        };
+        if page == self.page {
+            return self.reload();
+        }
+        self.update(Message::Page(page))
+    }
     fn locked(&self) -> bool {
         self.busy
             || self.mutating
@@ -511,6 +530,18 @@ impl App {
             );
         }
         match self.page {
+            Page::Local => {
+                if let Some(root) = self.root() {
+                    if self.local_category == crate::hub::Category::Patch {
+                        return Task::none();
+                    }
+                    self.busy = true;
+                    return Task::perform(
+                        background(move || workspace::collection(&root)),
+                        move |r| Message::Listed(revision, r),
+                    );
+                }
+            }
             Page::Hub => return self.ensure_catalog(),
             Page::Config | Page::Data => {
                 if let Some(root) = self.root() {
@@ -674,6 +705,7 @@ impl App {
                         if let Some(page) = args.iter().find_map(|s| s.strip_prefix("--page=")) {
                             let page = match page {
                                 "hub" => Page::Hub,
+                                "local" => Page::Local,
                                 "maps" => Page::Maps,
                                 "mods" => Page::Mods,
                                 "assets" => Page::Assets,
@@ -687,6 +719,11 @@ impl App {
                                 _ => Page::Home,
                             };
                             self.page = page;
+                            if page == Page::Local {
+                                self.local_category = crate::hub::Category::All;
+                            } else if let Some(kind) = self.kind() {
+                                self.local_category = crate::hub::Category::from_kind(kind);
+                            }
                             return self.reload();
                         }
                         if let Some(url) = args.iter().find(|x| x.starts_with("rockoon://")) {
@@ -774,7 +811,7 @@ impl App {
                     match result {
                         Ok(instance) => {
                             self.instance = Some(instance);
-                            if self.kind().is_some() {
+                            if self.kind().is_some() || self.page == Page::Local {
                                 return self.reload();
                             }
                             if self.page == Page::Hub {
@@ -807,6 +844,9 @@ impl App {
                     return Task::none();
                 }
                 self.page = page;
+                if let Some(kind) = self.kind() {
+                    self.local_category = crate::hub::Category::from_kind(kind);
+                }
                 self.folder_menu = false;
                 self.search.clear();
                 self.directory = PathBuf::new();
@@ -861,42 +901,26 @@ impl App {
             }
             Message::ResourceSource(online) => {
                 if online {
-                    if let Some(kind) = self.kind() {
-                        let category = crate::hub::Category::from_kind(kind);
-                        if category != self.hub.query.category {
-                            self.hub.selected = None;
-                            self.hub.detail_generation += 1;
-                            self.hub.detail_loading = false;
-                            self.hub.query.category = category;
-                            self.hub.query.page = 0;
-                            self.hub.loaded = false;
-                            self.hub.generation += 1;
-                            self.hub.loading = false;
-                        }
+                    let category = self.local_category;
+                    if self.page != Page::Hub && category != self.hub.query.category {
+                        self.hub.selected = None;
+                        self.hub.detail_generation += 1;
+                        self.hub.detail_loading = false;
+                        self.hub.query.category = category;
+                        self.hub.query.page = 0;
+                        self.hub.loaded = false;
+                        self.hub.generation += 1;
+                        self.hub.loading = false;
                     }
                     return self.update(Message::Page(Page::Hub));
                 }
-                let kind = self
-                    .hub
-                    .query
-                    .category
-                    .local_kind()
-                    .unwrap_or(self.local_kind);
-                return self.update(Message::ResourceKind(kind));
+                return self.select_local_category(self.hub.query.category);
             }
-            Message::ResourceKind(kind) => {
-                self.local_kind = kind;
-                self.asset_kind = kind;
-                self.directory = PathBuf::new();
-                let page = match kind {
-                    Kind::Maps => Page::Maps,
-                    Kind::Mods => Page::Mods,
-                    _ => Page::Assets,
-                };
-                if page == self.page {
-                    return self.reload();
+            Message::ResourceCategory(category) => {
+                if self.page == Page::Hub {
+                    return self.update_catalog(catalog::Action::Category(category));
                 }
-                return self.update(Message::Page(page));
+                return self.select_local_category(category);
             }
             Message::Import if !self.locked() => {
                 let initial = self.directory.clone();
@@ -1058,9 +1082,9 @@ impl App {
                             .to_string_lossy()
                             .to_string(),
                     ),
-                    PromptKind::CreateProfile => ("新建方案", String::new()),
-                    PromptKind::RenameProfile(_) => ("重命名方案", String::new()),
-                    PromptKind::DeleteProfile(_) => ("删除方案？", String::new()),
+                    PromptKind::CreateProfile => ("新建配置预设", String::new()),
+                    PromptKind::RenameProfile(_) => ("重命名配置预设", String::new()),
+                    PromptKind::DeleteProfile(_) => ("删除配置预设？", String::new()),
                     PromptKind::Restore => {
                         ("恢复原版关卡文件？现有文件会保留备份。", String::new())
                     }
@@ -1353,14 +1377,13 @@ impl App {
                     Err(e) => self.error(e),
                 }
             }
-            Message::Group(group) => self.group = group,
-            Message::ConfigSection(group) => {
-                let key = format!("{}:{group}", self.config_name);
-                let open = self
-                    .config_sections
-                    .entry(key)
-                    .or_insert(!matches!(group.as_str(), "键位与相机" | "高级"));
-                *open = !*open;
+            Message::ResetLevel(level) => {
+                self.group = format!("第 {} 关", level + 1);
+                return self.update(Message::Prompt(PromptKind::ResetData));
+            }
+            Message::ConfigSection(group, open) => {
+                self.config_sections
+                    .insert(format!("{}:{group}", self.config_name), open);
             }
             Message::Field(i, value) => {
                 if self.locked() {
@@ -1395,7 +1418,7 @@ impl App {
                 if let Some(root) = self.root() {
                     return self.change(move || {
                         profiles::change(&root, action)?;
-                        Ok("已更新方案".into())
+                        Ok("已更新配置预设".into())
                     });
                 }
             }
