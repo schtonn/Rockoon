@@ -47,6 +47,7 @@ static WORDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
         ("打开 Wine 设置", "Open Wine settings"),
         ("安装 Rosetta 2", "Install Rosetta 2"),
         ("重新检测", "Check again"),
+        ("环境检测", "Runtime check"),
         (
             "正在处理，请完成可能出现的系统窗口…",
             "Working. Complete any system dialogs that appear…",

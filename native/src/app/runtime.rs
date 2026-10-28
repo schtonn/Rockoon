@@ -2,8 +2,8 @@
 use super::views::{action, scrollable};
 use super::*;
 use iced::{
-    Alignment, Fill,
-    widget::{column, container, row, text},
+    Fill,
+    widget::{column, container, text},
 };
 use rockoon_platform::wine::{self, WineStatus};
 
@@ -276,13 +276,11 @@ impl App {
                     .padding([8, 0]),
             );
         }
-        body = body.push(
-            container(
-                row![action("重新检测", message(Action::Refresh), enabled)]
-                    .align_y(Alignment::Center),
-            )
-            .padding([8, 0]),
-        );
+        body = body.push(self.preference_row(
+            "环境检测",
+            "",
+            action("重新检测", message(Action::Refresh), enabled),
+        ));
         body.into()
     }
 }
