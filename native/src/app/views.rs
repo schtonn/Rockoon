@@ -152,11 +152,12 @@ impl App {
                 } else {
                     column![tabs, body].spacing(16).height(Fill).into()
                 };
-            container(column![header, body].spacing(20).height(Fill))
+            let foreground = container(column![header, body].spacing(20).height(Fill))
                 .padding(24)
                 .width(Fill)
                 .height(Fill)
-                .into()
+                .into();
+            self.frosted_page(foreground)
         };
         let base: Element<'_, Message> = if self.detached_tas {
             content
@@ -505,6 +506,31 @@ impl App {
         } else {
             container(tabs).padding(2).style(style::tabs).into()
         }
+    }
+    fn frosted_page<'a>(&self, foreground: Element<'a, Message>) -> Element<'a, Message> {
+        let Some(sky) = self.instance.as_ref().and_then(|i| {
+            i.visuals
+                .frosted_background(&self.preferences.home_background)
+        }) else {
+            return foreground;
+        };
+        let opacity: f32 = if style::colors(&self.theme()).background.r > 0.5 {
+            0.20
+        } else {
+            0.14
+        };
+        stack![
+            image(sky.clone())
+                .width(Fill)
+                .height(Fill)
+                .content_fit(iced::ContentFit::Fill)
+                .opacity(opacity),
+            foreground
+        ]
+        .width(Fill)
+        .height(Fill)
+        .clip(true)
+        .into()
     }
     fn header(&self) -> Element<'_, Message> {
         if self.instance.is_none() {

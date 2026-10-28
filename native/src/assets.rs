@@ -5,6 +5,7 @@ use std::{collections::HashMap, path::Path};
 #[derive(Clone, Debug, Default)]
 pub struct GameAssets {
     pub sky: Option<image::Handle>,
+    frosted_sky: Option<image::Handle>,
     pub backgrounds: Vec<Background>,
     pub balls: Option<std::sync::Arc<crate::home_balls::Assets>>,
     pub selected_button: Option<image::Handle>,
@@ -16,10 +17,13 @@ impl GameAssets {
     pub fn load(root: &Path) -> Self {
         let textures = root.join("Textures");
         let balls = crate::home_balls::Assets::load(root);
+        let sky = decode(&textures.join("Sky/Sky_A_Front.bmp"), None);
+        let frosted_sky = sky.as_ref().and_then(frosted);
         Self {
             captions: captions(&textures.join("Font_1.tga")),
             balls,
-            sky: decode(&textures.join("Sky/Sky_A_Front.bmp"), None),
+            sky,
+            frosted_sky,
             backgrounds: backgrounds(&textures.join("Sky")),
             selected_button: decode(&textures.join("Button01_select.tga"), Some((256, 256))),
             normal_button: decode(&textures.join("Button01_deselect.tga"), Some((256, 256))),
@@ -32,6 +36,13 @@ impl GameAssets {
             .find(|b| b.letter == letter)
             .map(|b| &b.image)
             .or(self.sky.as_ref())
+    }
+    pub fn frosted_background(&self, letter: &str) -> Option<&image::Handle> {
+        self.backgrounds
+            .iter()
+            .find(|b| b.letter == letter)
+            .map(|b| &b.frosted)
+            .or(self.frosted_sky.as_ref())
     }
     pub fn launch_button(&self, hovered: bool) -> Option<&image::Handle> {
         if hovered {
@@ -146,6 +157,7 @@ pub struct Background {
     pub letter: String,
     pub image: image::Handle,
     pub thumbnail: image::Handle,
+    pub frosted: image::Handle,
 }
 fn backgrounds(dir: &Path) -> Vec<Background> {
     let mut result = Vec::new();
@@ -154,14 +166,40 @@ fn backgrounds(dir: &Path) -> Vec<Background> {
     ] {
         let path = dir.join(format!("Sky_{letter}_Front.bmp"));
         if let (Ok(image), Ok(thumbnail)) = (preview(&path), thumbnail(&path)) {
+            let Some(frosted) = frosted(&thumbnail) else {
+                continue;
+            };
             result.push(Background {
                 letter: letter.into(),
+                frosted,
                 image,
                 thumbnail,
             });
         }
     }
     result
+}
+/// Cache a soft, small backdrop once per sky rather than blur during drawing or resizing.
+fn frosted(handle: &image::Handle) -> Option<image::Handle> {
+    let image::Handle::Rgba {
+        width,
+        height,
+        pixels,
+        ..
+    } = handle
+    else {
+        return None;
+    };
+    let pixels = bitmap::RgbaImage::from_raw(*width, *height, pixels.to_vec())?;
+    let small = bitmap::DynamicImage::ImageRgba8(pixels)
+        .thumbnail(480, 256)
+        .into_rgba8();
+    let blurred = bitmap::imageops::fast_blur(&small, 12.0);
+    Some(image::Handle::from_rgba(
+        blurred.width(),
+        blurred.height(),
+        blurred.into_raw(),
+    ))
 }
 pub fn thumbnail(path: &Path) -> Result<image::Handle, String> {
     let mut reader = bitmap::ImageReader::open(path).map_err(|e| e.to_string())?;
