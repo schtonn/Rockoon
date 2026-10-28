@@ -1,0 +1,40 @@
+name: Update native release notes
+
+on:
+  push:
+    branches: [codex/native-desktop]
+    paths: ["release-notes/native/*.md", ".github/workflows/native-release-notes.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-release-notes
+  cancel-in-progress: false
+
+jobs:
+  update-notes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Update existing release description
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("native/Cargo.toml").read_text())["package"]["version"]
+          tag = "native-v" + version
+          notes = Path("release-notes/native") / (version + ".md")
+          if not notes.is_file():
+              raise SystemExit(f"Release notes missing: {notes}")
+          subprocess.run(["gh", "release", "edit", tag, "--notes-file", str(notes)], check=True)
+          PY
