@@ -567,32 +567,17 @@ impl App {
                 .on_press_maybe(enabled.then_some(message))
                 .into()
         };
-        let config: Element<'_, Message> = if let Some(visuals) = self
+        let foreground = container(
+            column![space::vertical(), container(start_button).align_right(Fill)].height(Fill),
+        )
+        .padding(28)
+        .width(Fill)
+        .height(Fill);
+        if let Some(sky) = self
             .instance
             .as_ref()
-            .map(|i| &i.visuals)
-            .filter(|v| v.launch_button(false).is_some())
+            .and_then(|i| i.visuals.background(&self.preferences.home_background))
         {
-            crate::launch::sized_button(
-                visuals.launch_button(false).unwrap().clone(),
-                visuals.launch_button(true).unwrap().clone(),
-                crate::launch::caption(visuals, "Config", true),
-                true,
-                Message::Page(Page::Install),
-                iced::Size::new(192.0, 48.0),
-            )
-        } else {
-            action("CONFIG", Message::Page(Page::Install), true)
-        };
-        let menu = column![config, start_button]
-            .spacing(4)
-            .align_x(Alignment::Center);
-        let foreground =
-            container(column![space::vertical(), container(menu).align_right(Fill)].height(Fill))
-                .padding(28)
-                .width(Fill)
-                .height(Fill);
-        if let Some(sky) = self.instance.as_ref().and_then(|i| i.visuals.sky.as_ref()) {
             stack![
                 self.instance
                     .as_ref()
@@ -693,120 +678,41 @@ impl App {
         if self.sound.is_some() {
             crumbs = crumbs.push(action("停止试听", Message::StopSound, true));
         }
-        let mut list = column![].spacing(0);
-        for entry in self
+        let visible_entries: Vec<_> = self
             .entries
             .iter()
             .filter(|e| workspace::matches(&e.name, &self.search))
-        {
-            let kind = entry.kind;
-            let primary = if entry.directory {
-                action("打开", Message::Browse(entry.path.clone()), !self.busy)
-            } else {
-                match kind {
-                    Kind::Maps => action(
-                        "游玩",
-                        Message::Launch(Some(entry.path.clone())),
-                        !self.locked() && !entry.disabled,
-                    ),
-                    Kind::Mods => action(
-                        if entry.disabled { "启用" } else { "停用" },
-                        Message::Toggle(entry.clone()),
-                        !self.locked(),
-                    ),
-                    Kind::Skies | Kind::Textures => {
-                        action("预览", Message::Preview(entry.path.clone()), true)
-                    }
-                    Kind::Sounds => action(
-                        if self.sound.as_ref() == Some(&entry.path) {
-                            "停止"
-                        } else {
-                            "试听"
-                        },
-                        Message::Sound(entry.path.clone()),
-                        true,
-                    ),
-                }
-            };
-            let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
-                let mut menu = column![].spacing(3).width(156);
-                if kind == Kind::Mods && !entry.directory {
-                    menu = menu.push(menu_action(
-                        "配置",
-                        Message::FindConfig(entry.path.clone()),
-                        true,
-                    ));
-                }
-                menu = menu
-                    .push(menu_action(
-                        "打开文件夹",
-                        Message::Open(if entry.directory {
-                            entry.path.clone()
-                        } else {
-                            entry.path.parent().unwrap_or(&root).to_owned()
-                        }),
-                        true,
-                    ))
-                    .push(menu_action(
-                        "重命名",
-                        Message::Prompt(PromptKind::Rename(entry.path.clone())),
-                        !self.locked(),
-                    ))
-                    .push(menu_action(
-                        "移动",
-                        Message::Move(entry.path.clone()),
-                        !self.locked(),
-                    ))
-                    .push(menu_action(
-                        "删除",
-                        Message::Prompt(PromptKind::Delete(entry.path.clone())),
-                        !self.locked(),
-                    ));
-                Some(menu_panel(menu).into())
-            } else {
-                None
-            };
-            let glyph = if entry.directory {
-                crate::icons::Icon::Folder
-            } else {
-                match kind {
-                    Kind::Maps => crate::icons::Icon::Map,
-                    Kind::Mods => crate::icons::Icon::Puzzle,
-                    Kind::Sounds => crate::icons::Icon::Volume,
-                    _ => crate::icons::Icon::Image,
-                }
-            };
-            let line = row![
-                crate::icons::view(glyph, 18.0),
-                iced::widget::mouse_area(container(text(&entry.name).size(14)).width(Fill))
-                    .on_double_click(if entry.directory {
-                        Message::Browse(entry.path.clone())
-                    } else {
-                        match kind {
-                            Kind::Maps => Message::Launch(Some(entry.path.clone())),
-                            Kind::Mods => Message::FindConfig(entry.path.clone()),
-                            Kind::Skies | Kind::Textures => Message::Preview(entry.path.clone()),
-                            Kind::Sounds => Message::Sound(entry.path.clone()),
+            .collect();
+        let page_entries: Vec<_> = visible_entries
+            .iter()
+            .skip(self.local_page * crate::hub::PAGE_SIZE)
+            .take(crate::hub::PAGE_SIZE)
+            .copied()
+            .collect();
+        let mut list = column![].spacing(0);
+        if !page_entries.is_empty() {
+            list = list.push(
+                iced::widget::responsive(move |size| {
+                    let columns = if size.width >= 760.0 { 3 } else { 2 };
+                    let mut grid = column![].spacing(16);
+                    for chunk in page_entries.chunks(columns) {
+                        let mut line = row![].spacing(16);
+                        for entry in chunk {
+                            line = line.push(
+                                container(self.local_card(entry))
+                                    .width(iced::Length::FillPortion(1)),
+                            );
                         }
-                    }),
-                text(if entry.directory {
-                    String::new()
-                } else {
-                    crate::hub::size(entry.size)
+                        for _ in chunk.len()..columns {
+                            line =
+                                line.push(space::horizontal().width(iced::Length::FillPortion(1)));
+                        }
+                        grid = grid.push(line);
+                    }
+                    grid.into()
                 })
-                .size(14)
-                .width(88)
-                .align_x(Alignment::End),
-                container(primary).width(76).align_right(Fill)
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center);
-            list = list.push(crate::popup::context(
-                container(line).padding([5, 0]).width(Fill),
-                panel,
-                Message::EntryMenu(entry.path.clone()),
-            ));
-            list = list.push(separator());
+                .height(iced::Shrink),
+            );
         }
         let visible = self
             .entries
@@ -880,6 +786,7 @@ impl App {
         } else {
             None
         };
+        let pages = visible.div_ceil(crate::hub::PAGE_SIZE).max(1);
         body.push(crate::popup::context(
             scrollable(
                 container(list)
@@ -890,19 +797,206 @@ impl App {
             panel,
             Message::EntryMenu(self.directory.clone()),
         ))
+        .push(
+            row![
+                text(format!("{visible} 项资源")).size(14),
+                space::horizontal(),
+                action(
+                    "上一页",
+                    Message::LocalPage(self.local_page.saturating_sub(1)),
+                    self.local_page > 0
+                ),
+                text(format!("{} / {pages}", self.local_page + 1)).size(14),
+                action(
+                    "下一页",
+                    Message::LocalPage(self.local_page + 1),
+                    self.local_page + 1 < pages
+                )
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+        )
         .height(Fill)
         .into()
+    }
+    fn local_card<'a>(&'a self, entry: &'a Entry) -> Element<'a, Message> {
+        let root = self.root().unwrap_or_default();
+        let kind = entry.kind;
+        let primary = if entry.directory {
+            action("打开", Message::Browse(entry.path.clone()), !self.busy)
+        } else {
+            match kind {
+                Kind::Maps => action(
+                    "游玩",
+                    Message::Launch(Some(entry.path.clone())),
+                    !self.locked() && !entry.disabled,
+                ),
+                Kind::Mods => action(
+                    if entry.disabled { "启用" } else { "停用" },
+                    Message::Toggle(entry.clone()),
+                    !self.locked(),
+                ),
+                Kind::Skies | Kind::Textures => {
+                    action("预览", Message::Preview(entry.path.clone()), true)
+                }
+                Kind::Sounds => action(
+                    if self.sound.as_ref() == Some(&entry.path) {
+                        "停止"
+                    } else {
+                        "试听"
+                    },
+                    Message::Sound(entry.path.clone()),
+                    true,
+                ),
+            }
+        };
+        let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
+            let mut menu = column![].spacing(3).width(156);
+            if kind == Kind::Mods && !entry.directory {
+                menu = menu.push(menu_action(
+                    "配置",
+                    Message::FindConfig(entry.path.clone()),
+                    true,
+                ));
+            }
+            menu = menu
+                .push(menu_action(
+                    "打开文件夹",
+                    Message::Open(if entry.directory {
+                        entry.path.clone()
+                    } else {
+                        entry.path.parent().unwrap_or(&root).to_owned()
+                    }),
+                    true,
+                ))
+                .push(menu_action(
+                    "重命名",
+                    Message::Prompt(PromptKind::Rename(entry.path.clone())),
+                    !self.locked(),
+                ))
+                .push(menu_action(
+                    "移动",
+                    Message::Move(entry.path.clone()),
+                    !self.locked(),
+                ))
+                .push(menu_action(
+                    "删除",
+                    Message::Prompt(PromptKind::Delete(entry.path.clone())),
+                    !self.locked(),
+                ));
+            Some(menu_panel(menu).into())
+        } else {
+            None
+        };
+        let message = if entry.directory {
+            Message::Browse(entry.path.clone())
+        } else {
+            match kind {
+                Kind::Maps => Message::Launch(Some(entry.path.clone())),
+                Kind::Mods => Message::Toggle(entry.clone()),
+                Kind::Sounds => Message::Sound(entry.path.clone()),
+                _ => Message::Preview(entry.path.clone()),
+            }
+        };
+        let enabled = if entry.directory {
+            !self.busy
+        } else if matches!(kind, Kind::Maps | Kind::Mods) {
+            !self.locked() && (kind == Kind::Mods || !entry.disabled)
+        } else {
+            true
+        };
+        let cover: Element<'a, Message> =
+            if let Some(Some(preview)) = self.local_previews.get(&entry.path) {
+                button(crate::cover::view(
+                    preview.clone(),
+                    128.0,
+                    iced::ContentFit::Cover,
+                ))
+                .padding(0)
+                .style(style::quiet)
+                .on_press_maybe(enabled.then_some(message))
+                .into()
+            } else {
+                container(
+                    column![
+                        crate::icons::view(
+                            if entry.directory {
+                                crate::icons::Icon::Folder
+                            } else {
+                                match kind {
+                                    Kind::Maps => crate::icons::Icon::Map,
+                                    Kind::Mods => crate::icons::Icon::Puzzle,
+                                    Kind::Sounds => crate::icons::Icon::Volume,
+                                    _ => crate::icons::Icon::Image,
+                                }
+                            },
+                            24.0
+                        ),
+                        primary
+                    ]
+                    .spacing(10)
+                    .align_x(Alignment::Center),
+                )
+                .center_x(Fill)
+                .center_y(128)
+                .style(style::catalog_placeholder)
+                .into()
+            };
+        let name = if entry.name.chars().count() > 36 {
+            format!("{}…", entry.name.chars().take(35).collect::<String>())
+        } else {
+            entry.name.clone()
+        };
+        let metadata = row![
+            text(if entry.directory {
+                "文件夹".into()
+            } else {
+                format!(
+                    "{}{}",
+                    entry.kind,
+                    if entry.disabled {
+                        "（已停用）"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .size(13)
+            .width(Fill),
+            text(if entry.directory {
+                String::new()
+            } else {
+                crate::hub::size(entry.size)
+            })
+            .size(13)
+        ]
+        .spacing(8);
+        let card = container(
+            column![
+                cover,
+                container(column![text(name).size(16).height(42), metadata].spacing(10))
+                    .padding(12)
+            ]
+            .spacing(0),
+        )
+        .width(Fill)
+        .style(style::catalog_card);
+        crate::popup::context(card, panel, Message::EntryMenu(entry.path.clone()))
     }
     fn local_components(&self) -> Element<'_, Message> {
         let Some(instance) = &self.instance else {
             return self.empty();
         };
-        let mut list = column![text("Ballance").size(16)].spacing(8);
+        let mut components = column![text("Ballance").size(16)].spacing(8);
         for component in &instance.components {
-            list = list.push(
+            components = components.push(
                 container(
                     row![
-                        text(&component.name).size(14).width(Fill),
+                        crate::hint::label(
+                            component.name.clone(),
+                            crate::components::help(&component.key)
+                        ),
+                        space::horizontal(),
                         text(&component.version).size(14)
                     ]
                     .align_y(Alignment::Center),
@@ -911,8 +1005,47 @@ impl App {
                 .center_y(ROW_HEIGHT),
             );
         }
-        list.push(action("配置游戏", Message::Page(Page::Install), true))
-            .into()
+        components = components.push(action("配置游戏", Message::Page(Page::Install), true));
+        let mut list =
+            column![container(components).padding(16).style(style::catalog_card)].spacing(16);
+        for patch in self
+            .hub
+            .receipts
+            .iter()
+            .filter(|r| r.category == "x-patch" && workspace::matches(&r.name, &self.search))
+        {
+            let name = if patch.name.is_empty() {
+                format!("补丁 #{}", patch.id)
+            } else {
+                patch.name.clone()
+            };
+            let version = patch
+                .version_note
+                .clone()
+                .or_else(|| patch.version.map(|v| format!("版本 #{v}")))
+                .unwrap_or_else(|| "已安装".into());
+            let card = container(
+                column![
+                    row![text(name).size(16).width(Fill), text(version).size(13)]
+                        .align_y(Alignment::Center),
+                    row![
+                        text(format!("{} 个文件", patch.files.len()))
+                            .size(13)
+                            .width(Fill),
+                        action(
+                            "详情",
+                            Message::Hub(super::catalog::Action::Open(patch.id)),
+                            true
+                        )
+                    ]
+                ]
+                .spacing(12),
+            )
+            .padding(16)
+            .style(style::catalog_card);
+            list = list.push(card);
+        }
+        scrollable(list).height(Fill).into()
     }
     pub(super) fn sky_picker(&self) -> Element<'_, Message> {
         let mut options = vec!["自制地图（X）".to_owned()];
@@ -1393,14 +1526,11 @@ impl App {
         if self.instance.is_none() {
             return self.empty();
         }
-        let mut list = column![
-            text("保存当前设置和模组启停状态，之后可以一键切换。").size(14),
-            action(
-                "保存当前设置",
-                Message::Prompt(PromptKind::CreateProfile),
-                !self.locked()
-            )
-        ]
+        let mut list = column![action(
+            "新配置集",
+            Message::Prompt(PromptKind::CreateProfile),
+            !self.locked()
+        )]
         .spacing(8);
         if let Some(profiles) = self.profile_index["profiles"].as_array() {
             for p in profiles {
@@ -1478,22 +1608,6 @@ impl App {
             if self.versions_loading {
                 body = body.push(text("读取历史版本…").size(14));
             }
-            let help = if self.component_target.starts_with("player-") {
-                if self.component_target == "player-msvc2022" {
-                    "NewPlayer 替换当前游戏的运行器，这个备用构建可用于排查兼容问题。"
-                } else {
-                    "NewPlayer 替换当前游戏的运行器，修复兼容问题并提供窗口和宽屏设置。"
-                }
-            } else if matches!(self.component_target.as_str(), "bmlplus" | "bml") {
-                "加载器依赖当前目录的 NewPlayer 来加载地图和模组，缺少时会先安装 NewPlayer。"
-            } else {
-                "这个组件会安装到当前游戏目录。"
-            };
-            body = body.push(text(help).size(14));
-            if self.component_target == "bml" {
-                body =
-                    body.push(text("旧版 BML 与 BML+ 只能启用一个，安装时会切换加载器。").size(14));
-            }
         }
         if let Some(error) = &self.component_error {
             body = body.push(text(error).size(14));
@@ -1540,13 +1654,11 @@ impl App {
                 game = game.push(
                     container(
                         row![
-                            text(&component.name).size(14),
+                            crate::hint::label(
+                                component.name.clone(),
+                                crate::components::help(&component.key)
+                            ),
                             text(&component.version).size(14).width(Fill),
-                            action(
-                                "更新 / 重装",
-                                Message::EditComponents(component.key.clone()),
-                                !self.locked()
-                            )
                         ]
                         .spacing(12)
                         .align_y(Alignment::Center),
@@ -1556,22 +1668,11 @@ impl App {
                 );
             }
             content = content.push(container(game).padding(16).style(style::menu));
-            let has_loader = instance
-                .components
-                .iter()
-                .any(|c| matches!(c.key.as_str(), "bml" | "bmlplus"));
-            if !has_loader {
-                content = content.push(
-                    text("这份游戏已可以游玩，添加 BML+ 后还可以安装自制地图和模组。").size(14),
-                );
-                content = content.push(action(
-                    "添加地图与模组支持",
-                    Message::EditComponents("bmlplus".into()),
-                    !self.locked(),
-                ));
-            } else {
-                content = content.push(action("浏览地图和模组", Message::Page(Page::Hub), true));
-            }
+            content = content.push(action(
+                "浏览地图和模组",
+                Message::BrowseLocalResources,
+                true,
+            ));
             content = content.push(separator()).push(action(
                 "恢复原版关卡",
                 Message::Prompt(PromptKind::Restore),
@@ -1586,15 +1687,34 @@ impl App {
         if fresh {
             content = content.push(config_branch(
                 column![
-                    checkbox(self.install_player)
-                        .label("NewPlayer")
-                        .on_toggle(|p| Message::InstallChoice(p, p && self.install_bmlplus)),
-                    checkbox(self.install_bmlplus)
-                        .label("BML+")
-                        .on_toggle(|b| Message::InstallChoice(self.install_player || b, b)),
-                    text("NewPlayer 修复游戏运行器的兼容问题，BML+ 依赖它来加载地图和模组。")
-                        .size(14),
-                    text("它们会和游戏一起安装到所选的空文件夹中。").size(14),
+                    row![
+                        checkbox(self.install_player)
+                            .on_toggle(|p| Message::InstallChoice(p, p && self.install_bmlplus)),
+                        iced::widget::mouse_area(crate::hint::label(
+                            "NewPlayer",
+                            crate::components::help("player-vc6")
+                        ))
+                        .on_press(Message::InstallChoice(
+                            !self.install_player,
+                            !self.install_player && self.install_bmlplus
+                        ))
+                    ]
+                    .spacing(9)
+                    .align_y(Alignment::Center),
+                    row![
+                        checkbox(self.install_bmlplus)
+                            .on_toggle(|b| Message::InstallChoice(self.install_player || b, b)),
+                        iced::widget::mouse_area(crate::hint::label(
+                            "BML+",
+                            crate::components::help("bmlplus")
+                        ))
+                        .on_press(Message::InstallChoice(
+                            self.install_player || !self.install_bmlplus,
+                            !self.install_bmlplus
+                        ))
+                    ]
+                    .spacing(9)
+                    .align_y(Alignment::Center),
                     action("选择目录并安装", Message::InstallGame, !self.locked())
                 ]
                 .spacing(10)
@@ -1714,6 +1834,37 @@ impl App {
             .chain((1..=13).map(|n| format!("第 {n} 关")))
             .collect();
         let slot = slots[prefs.level_slot.min(13) as usize].clone();
+        let mut backgrounds = column![text("首页背景").size(14)].spacing(10);
+        if let Some(instance) = &self.instance {
+            for chunk in instance.visuals.backgrounds.chunks(4) {
+                let mut choices = row![].spacing(10);
+                for background in chunk {
+                    choices = choices.push(
+                        button(
+                            column![
+                                crate::cover::view(
+                                    background.thumbnail.clone(),
+                                    72.0,
+                                    iced::ContentFit::Fill
+                                ),
+                                container(text(&background.name).size(13)).padding([6, 8])
+                            ]
+                            .spacing(0),
+                        )
+                        .padding(2)
+                        .style(style::background_choice(
+                            self.preferences.home_background == background.letter,
+                        ))
+                        .on_press(Message::HomeBackground(background.letter.clone()))
+                        .width(iced::Length::FillPortion(1)),
+                    );
+                }
+                for _ in chunk.len()..4 {
+                    choices = choices.push(space::horizontal().width(iced::Length::FillPortion(1)));
+                }
+                backgrounds = backgrounds.push(choices);
+            }
+        }
         let mut content = column![
             self.preference_row(
                 "配色",
@@ -1774,19 +1925,23 @@ impl App {
             ),
         ]
         .spacing(0);
-        content = content.push(separator()).push(
-            self.preference_row(
-                "累计游玩",
-                "",
-                text(format!(
-                    "{} 小时 {} 分钟",
-                    prefs.playtime / 3600,
-                    prefs.playtime % 3600 / 60
-                ))
-                .size(14)
-                .into(),
-            ),
-        );
+        content = content
+            .push(separator())
+            .push(backgrounds)
+            .push(separator())
+            .push(
+                self.preference_row(
+                    "累计游玩",
+                    "",
+                    text(format!(
+                        "{} 小时 {} 分钟",
+                        prefs.playtime / 3600,
+                        prefs.playtime % 3600 / 60
+                    ))
+                    .size(14)
+                    .into(),
+                ),
+            );
         if let Some(last) = prefs.last_played {
             let elapsed = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

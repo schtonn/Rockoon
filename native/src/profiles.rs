@@ -199,6 +199,13 @@ fn change_inner(root: &Path, action: Action) -> Result<Value, String> {
             }
             let id = workspace::id();
             let mut snapshot = capture(root)?;
+            if let Some(outgoing) = list.iter_mut().find(|p| p["id"] == current)
+                && let Some(values) = snapshot.as_object()
+            {
+                for (key, value) in values {
+                    outgoing[key] = value.clone();
+                }
+            }
             snapshot["id"] = json!(id);
             snapshot["name"] = json!(name.trim());
             snapshot["createdAt"] = json!(
@@ -294,6 +301,10 @@ mod tests {
             .as_str()
             .unwrap()
             .to_owned();
+        let second = change_inner(root, Action::Create("second".into())).unwrap()["currentId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         fs::rename(
             root.join("ModLoader/Mods/Test.bmodp"),
             root.join("ModLoader/Mods/Test.bmodp.disable"),
@@ -302,7 +313,6 @@ mod tests {
         let mut opts = original.clone();
         opts["volume"] = json!(0.25);
         config::save_options(root, &opts).unwrap();
-        change_inner(root, Action::Create("second".into())).unwrap();
         change_inner(root, Action::Switch(first)).unwrap();
         assert!(root.join("ModLoader/Mods/Test.bmodp").exists());
         let current = config::options(root).unwrap();
@@ -313,5 +323,13 @@ mod tests {
                 .unwrap()
                 .contains("# retained")
         );
+        change_inner(root, Action::Switch(second.clone())).unwrap();
+        assert_eq!(config::options(root).unwrap()["volume"], json!(0.25));
+        let mut opts = config::options(root).unwrap();
+        opts["volume"] = json!(0.5);
+        config::save_options(root, &opts).unwrap();
+        change_inner(root, Action::Create("third".into())).unwrap();
+        change_inner(root, Action::Switch(second)).unwrap();
+        assert_eq!(config::options(root).unwrap()["volume"], json!(0.5));
     }
 }

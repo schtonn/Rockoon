@@ -351,3 +351,16 @@ pub fn toggle(
     style.foreground = if active { c.on_solid } else { c.text }.into();
     style
 }
+
+pub fn background_choice(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
+    move |theme, status| {
+        let mut style = quiet(theme, status);
+        style.border = outline(if selected {
+            colors(theme).focus
+        } else {
+            colors(theme).line
+        });
+        style.border.width = if selected { 2.0 } else { 1.0 };
+        style
+    }
+}

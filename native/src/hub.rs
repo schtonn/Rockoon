@@ -189,8 +189,12 @@ impl Package {
             .collect::<Vec<_>>()
             .join("、")
     }
-    pub fn patch(&self) -> bool {
-        self.category == "x-patch" || !self.source_key.is_empty()
+    pub fn managed_component(&self) -> Option<&str> {
+        matches!(
+            self.source_key.as_str(),
+            "player-vc6" | "player-msvc2022" | "bml" | "bmlplus"
+        )
+        .then_some(self.source_key.as_str())
     }
     pub fn cover(&self) -> Option<&str> {
         self.preview_images.first().map(String::as_str)
@@ -304,6 +308,12 @@ pub struct Receipt {
     pub version: Option<u64>,
     pub current: bool,
     pub files: Vec<PathBuf>,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub version_note: Option<String>,
 }
 pub fn receipts(root: &Path) -> Result<Vec<Receipt>, String> {
     let bytes = match std::fs::read(root.join(".rockoon/online-resources.json")) {
@@ -342,6 +352,12 @@ pub fn record(
         version: choice.version(),
         current: choice.current(),
         files,
+        name: package.title().into(),
+        category: package.category.clone(),
+        version_note: match choice {
+            Choice::Version(v) => v.note.clone(),
+            Choice::Latest => None,
+        },
     });
     workspace::replace(
         root,
@@ -588,6 +604,68 @@ pub fn size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn only_known_runtime_packages_use_the_game_editor() {
+        for key in ["player-vc6", "player-msvc2022", "bml", "bmlplus"] {
+            let package = Package {
+                source_key: key.into(),
+                category: "x-patch".into(),
+                ..Default::default()
+            };
+            assert_eq!(package.managed_component(), Some(key));
+        }
+        for key in ["", "custom-patch"] {
+            let package = Package {
+                source_key: key.into(),
+                category: "x-patch".into(),
+                ..Default::default()
+            };
+            assert!(package.managed_component().is_none());
+        }
+    }
+    #[test]
+    fn extra_patch_installs_to_its_relative_paths_and_keeps_its_receipt() {
+        use std::io::Write;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("Bin")).unwrap();
+        std::fs::write(root.path().join("Bin/extra.dll"), b"before").unwrap();
+        let archive = tempfile::NamedTempFile::new().unwrap();
+        let mut zip = zip::ZipWriter::new(archive.reopen().unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("manifest.json", options).unwrap();
+        zip.write_all(br#"{"manifest_version":1,"category":"x-patch","name":"Extra patch"}"#)
+            .unwrap();
+        zip.start_file("content/Bin/extra.dll", options).unwrap();
+        zip.write_all(b"after").unwrap();
+        zip.finish().unwrap();
+        let (_, files) = workspace::brp_files(root.path(), archive.path(), "X").unwrap();
+        assert_eq!(
+            std::fs::read(root.path().join("Bin/extra.dll")).unwrap(),
+            b"after"
+        );
+        let package = Package {
+            id: 700,
+            name: Some("Extra patch".into()),
+            category: "x-patch".into(),
+            ..Default::default()
+        };
+        record(
+            root.path(),
+            &package,
+            &Choice::Version(Release {
+                version: 3,
+                note: Some("v1.2".into()),
+                is_current: true,
+            }),
+            files,
+        )
+        .unwrap();
+        let installed = receipts(root.path()).unwrap();
+        assert_eq!(installed[0].name, "Extra patch");
+        assert_eq!(installed[0].category, "x-patch");
+        assert_eq!(installed[0].version_note.as_deref(), Some("v1.2"));
+        assert!(root.path().join(".rockoon/backups").exists());
+    }
     #[test]
     fn query_encodes_keywords_and_keeps_pagination() {
         let query = Query {

@@ -158,6 +158,16 @@ impl std::fmt::Display for ReleaseChoice {
     }
 }
 
+pub fn help(key: &str) -> &'static str {
+    if key.starts_with("player-") {
+        "修复兼容问题。"
+    } else if matches!(key, "bml" | "bmlplus") {
+        "加载地图和模组。"
+    } else {
+        ""
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

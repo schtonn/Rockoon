@@ -117,6 +117,8 @@ pub enum Message {
     CloseMenus,
     NoticeTick,
     Search(String),
+    LocalPage(usize),
+    LocalThumbnails(u64, Result<crate::assets::Thumbnails, String>),
     Refresh,
     Open(PathBuf),
     Opened(Result<(), String>),
@@ -194,6 +196,8 @@ pub enum Message {
     Show(Option<iced::window::Id>),
     PrefBool(String, bool),
     ColorMode(preferences::ColorMode),
+    HomeBackground(String),
+    BrowseLocalResources,
     PrefText(String, String),
     Saved(Result<(), String>),
     Tas(TasAction),
@@ -304,6 +308,8 @@ pub struct App {
     component_error: Option<String>,
     versions_loading: bool,
     entries: Vec<Entry>,
+    local_page: usize,
+    local_previews: std::collections::HashMap<PathBuf, Option<iced::widget::image::Handle>>,
     directory: PathBuf,
     asset_kind: Kind,
     local_category: crate::hub::Category,
@@ -383,6 +389,8 @@ impl App {
             component_error: None,
             versions_loading: false,
             entries: vec![],
+            local_page: 0,
+            local_previews: std::collections::HashMap::new(),
             directory: PathBuf::new(),
             asset_kind: Kind::Skies,
             local_category: crate::hub::Category::Map,
@@ -511,9 +519,47 @@ impl App {
             Message::Saved,
         )
     }
+    fn prepare_local_thumbnails(&mut self) -> Task<Message> {
+        let Some(root) = self.root() else {
+            return Task::none();
+        };
+        if self.local_previews.len() > 64 {
+            self.local_previews.clear();
+        }
+        let entries: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|e| workspace::matches(&e.name, &self.search))
+            .skip(self.local_page * crate::hub::PAGE_SIZE)
+            .take(crate::hub::PAGE_SIZE)
+            .filter(|e| !self.local_previews.contains_key(&e.path))
+            .cloned()
+            .collect();
+        for entry in &entries {
+            self.local_previews.insert(entry.path.clone(), None);
+        }
+        if entries.is_empty() {
+            return Task::none();
+        }
+        let revision = self.revision;
+        Task::perform(
+            background(move || {
+                Ok(entries
+                    .into_iter()
+                    .map(|e| {
+                        let thumbnail = crate::assets::local_thumbnail(&root, &e);
+                        (e.path, thumbnail)
+                    })
+                    .collect())
+            }),
+            move |r| Message::LocalThumbnails(revision, r),
+        )
+    }
     fn reload(&mut self) -> Task<Message> {
         self.revision += 1;
         let revision = self.revision;
+        self.local_previews.clear();
+        self.local_page = 0;
         self.busy = false;
         self.preview_revision += 1;
         self.skybox = None;
@@ -537,7 +583,7 @@ impl App {
             Page::Local => {
                 if let Some(root) = self.root() {
                     if self.local_category == crate::hub::Category::Patch {
-                        return Task::none();
+                        return self.catalog_receipts();
                     }
                     self.busy = true;
                     return Task::perform(
@@ -852,7 +898,43 @@ impl App {
                 }
                 return self.update(*next);
             }
-            Message::Search(s) => self.search = s,
+            Message::Search(s) => {
+                self.search = s;
+                self.local_page = 0;
+                if self.page.section() == Page::Maps && self.page != Page::Hub {
+                    return self.prepare_local_thumbnails();
+                }
+            }
+            Message::LocalPage(page) => {
+                let total = self
+                    .entries
+                    .iter()
+                    .filter(|e| workspace::matches(&e.name, &self.search))
+                    .count();
+                self.local_page = page.min(total.div_ceil(crate::hub::PAGE_SIZE).max(1) - 1);
+                return self.prepare_local_thumbnails();
+            }
+            Message::LocalThumbnails(revision, result) => {
+                if revision == self.revision {
+                    match result {
+                        Ok(images) => {
+                            self.local_previews.extend(images);
+                            if self.local_previews.len() > 64 {
+                                let visible: std::collections::HashSet<_> = self
+                                    .entries
+                                    .iter()
+                                    .filter(|e| workspace::matches(&e.name, &self.search))
+                                    .skip(self.local_page * crate::hub::PAGE_SIZE)
+                                    .take(crate::hub::PAGE_SIZE)
+                                    .map(|e| e.path.clone())
+                                    .collect();
+                                self.local_previews.retain(|path, _| visible.contains(path));
+                            }
+                        }
+                        Err(e) => self.error(e),
+                    }
+                }
+            }
             Message::Refresh => {
                 if self.document.as_ref().is_some_and(|d| d.dirty) {
                     return self.update(Message::Prompt(PromptKind::Discard(Box::new(
@@ -886,7 +968,13 @@ impl App {
                 }
                 self.busy = false;
                 match result {
-                    Ok(entries) => self.entries = entries,
+                    Ok(entries) => {
+                        self.entries = entries;
+                        return Task::batch([
+                            self.prepare_local_thumbnails(),
+                            self.catalog_receipts(),
+                        ]);
+                    }
                     Err(e) => self.error(e),
                 }
             }
@@ -1080,7 +1168,7 @@ impl App {
                             .to_string_lossy()
                             .to_string(),
                     ),
-                    PromptKind::CreateProfile => ("保存当前设置", String::new()),
+                    PromptKind::CreateProfile => ("新配置集", String::new()),
                     PromptKind::RenameProfile(_) => ("重命名", String::new()),
                     PromptKind::DeleteProfile(_) => ("删除这份设置？", String::new()),
                     PromptKind::Restore => {
@@ -1221,7 +1309,12 @@ impl App {
                 let revision = self.preview_revision;
                 self.preview_path = Some(path.clone());
                 self.skybox = None;
-                if self.kind() == Some(Kind::Skies) {
+                if self.kind() == Some(Kind::Skies)
+                    || self
+                        .entries
+                        .iter()
+                        .any(|e| e.path == path && e.kind == Kind::Skies)
+                {
                     return Task::perform(
                         background(move || {
                             crate::sky::Skybox::load(&path).map(std::sync::Arc::new)
@@ -1775,6 +1868,20 @@ impl App {
                 self.home_active = true;
                 return iced::window::set_mode(id, iced::window::Mode::Windowed)
                     .chain(iced::window::gain_focus(id));
+            }
+            Message::BrowseLocalResources => {
+                self.local_category = crate::hub::Category::All;
+                return self.update(Message::Page(Page::Local));
+            }
+            Message::HomeBackground(letter) => {
+                if self
+                    .instance
+                    .as_ref()
+                    .is_some_and(|i| i.visuals.backgrounds.iter().any(|b| b.letter == letter))
+                {
+                    self.preferences.home_background = letter;
+                    return self.save_preferences();
+                }
             }
             Message::ColorMode(mode) => {
                 self.preferences.color_mode = mode;

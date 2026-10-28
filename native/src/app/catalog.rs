@@ -42,7 +42,7 @@ impl App {
         };
         Task::batch([receipts, request])
     }
-    fn catalog_receipts(&mut self) -> Task<Message> {
+    pub(super) fn catalog_receipts(&mut self) -> Task<Message> {
         let Some(root) = self.root() else {
             self.hub.receipts.clear();
             self.hub.receipt_root = None;
@@ -206,12 +206,23 @@ impl App {
                     Err(e) => self.hub.error = Some(e),
                 }
             }
-            Action::Open(id) => return self.catalog_open(id),
+            Action::Open(id) => {
+                if self.page != Page::Hub {
+                    self.hub.query.category = self.local_category;
+                    self.hub.query.page = 0;
+                    self.hub.loaded = false;
+                }
+                self.page = Page::Hub;
+                return self.catalog_open(id);
+            }
             Action::Back => {
                 self.hub.selected = None;
                 self.hub.detail_generation += 1;
                 self.hub.detail_loading = false;
                 self.hub.detail_error = None;
+                if !self.hub.loaded {
+                    return self.fetch_catalog(true);
+                }
                 return self.catalog_images();
             }
             Action::RetryDetail => {
@@ -268,7 +279,7 @@ impl App {
                 let Some(package) = package else {
                     return Task::none();
                 };
-                if package.patch() {
+                if package.managed_component().is_some() {
                     return self.update(Message::Page(Page::Install));
                 }
                 let Some(root) = self.root() else {
@@ -447,7 +458,7 @@ impl App {
         let installed = self.hub.installed(package);
         let label = if busy {
             "安装中…"
-        } else if package.patch() {
+        } else if package.managed_component().is_some() {
             "管理组件"
         } else if installed {
             "重新安装"
@@ -619,7 +630,7 @@ impl App {
         }
         let label = if self.hub_busy(package.id) {
             "安装中…"
-        } else if package.patch() {
+        } else if package.managed_component().is_some() {
             "管理组件"
         } else if self.root().is_none() {
             "选择游戏目录"

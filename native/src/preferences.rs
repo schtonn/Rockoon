@@ -32,6 +32,7 @@ pub struct Preferences {
     pub motd: String,
     pub language: String,
     pub color_mode: ColorMode,
+    pub home_background: String,
     pub enable_tas: bool,
     pub playtime: u64,
     pub last_played: Option<u64>,
@@ -47,6 +48,7 @@ impl Default for Preferences {
             motd: String::new(),
             language: "zh".into(),
             color_mode: ColorMode::default(),
+            home_background: "A".into(),
             enable_tas: false,
             playtime: 0,
             last_played: None,
@@ -169,10 +171,13 @@ mod tests {
             serde_json::from_str(r#"{"language":"en","hideOnLaunch":true,"enableTas":true}"#)
                 .unwrap();
         assert_eq!(prefs.color_mode, ColorMode::Dark);
+        assert_eq!(prefs.home_background, "A");
+        prefs.home_background = "L".into();
         prefs.color_mode = ColorMode::Light;
         let saved = serde_json::to_vec(&prefs).unwrap();
         let restored: Preferences = serde_json::from_slice(&saved).unwrap();
         assert_eq!(restored.color_mode, ColorMode::Light);
+        assert_eq!(restored.home_background, "L");
         assert!(restored.hide_on_launch && restored.enable_tas);
         assert_eq!(restored.language, "en");
         let unknown: Preferences = serde_json::from_str(r#"{"colorMode":"unrecognized"}"#).unwrap();
