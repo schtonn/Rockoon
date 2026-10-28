@@ -19,7 +19,7 @@ fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(5))
         .timeout_read(Duration::from_secs(15))
-        .user_agent("Rockoon/2.7.1")
+        .user_agent(concat!("RockoonNative/", env!("CARGO_PKG_VERSION")))
         .build()
 }
 pub fn json_url(url: &str) -> Result<Value, String> {
@@ -107,6 +107,12 @@ pub fn versions(id: u64) -> Result<Vec<Version>, String> {
 }
 #[derive(Clone, Debug)]
 pub enum Request {
+    Bbp {
+        root: PathBuf,
+        exe: String,
+        release: crate::blender::BbpRelease,
+        textures: String,
+    },
     Update {
         root: PathBuf,
         release: crate::updates::Release,
@@ -149,7 +155,8 @@ pub enum Request {
 impl Request {
     pub fn root(&self) -> &Path {
         match self {
-            Self::Update { root, .. }
+            Self::Bbp { root, .. }
+            | Self::Update { root, .. }
             | Self::Game { root, .. }
             | Self::Patch { root, .. }
             | Self::Resource { root, .. }
@@ -162,6 +169,7 @@ impl Request {
     }
     pub fn key(&self) -> String {
         match self {
+            Self::Bbp { root, .. } => format!("bbp:{}", root.display()),
             Self::Resource {
                 root,
                 package,
@@ -184,6 +192,7 @@ impl Request {
     }
     pub fn title(&self) -> String {
         match self {
+            Self::Bbp { release, .. } => format!("Ballance Blender Plugin {}", release.tag),
             Self::Update { .. } => "更新 Rockoon".into(),
             #[cfg(not(windows))]
             Self::Wine { .. } => "准备 Wine".into(),
@@ -456,6 +465,26 @@ impl Job {
         let _lock = INSTALL.lock().map_err(error)?;
         self.check()?;
         match &self.request {
+            Request::Bbp {
+                root,
+                exe,
+                release,
+                textures,
+            } => {
+                let file = self.download(&release.url).or_else(|error| {
+                    if self.cancelled.load(Ordering::Relaxed) {
+                        return Err(error);
+                    }
+                    let fallback =
+                        crate::blender::bbp_latest_release().map_err(workspace::error)?;
+                    self.download(&fallback.url)
+                })?;
+                self.check()?;
+                self.phase("安装并启用 BBP");
+                self.state.lock().map_err(error)?.cancellable = false;
+                crate::blender::install_archive(root, file.path(), exe, textures)?;
+                Ok("BBP 已安装并启用".into())
+            }
             Request::Update { root, release } => {
                 use sha2::{Digest, Sha256};
                 let file = self.download(&release.url)?;
@@ -726,6 +755,12 @@ fn plan_import(
             return Err("单次安装依赖超过 32 个资源".into());
         }
         let info = lookup(id)?;
+        if info["source_key"]
+            .as_str()
+            .is_some_and(|key| key.starts_with("bbp-"))
+        {
+            return Err("BBP 需要安装到 Blender，请从资源页的制图入口安装".into());
+        }
         if let Some(deps) = info["dependencies"].as_array() {
             for dep in deps {
                 let id = dep
@@ -814,6 +849,19 @@ pub fn patch_updates(root: &Path) -> Result<Vec<Patch>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn blender_packages_cannot_be_installed_as_game_resources_or_dependencies() {
+        for dependency in [false, true] {
+            let result = plan_import("https://dl.ballance.top/packages/1/download", |id| {
+                if dependency && id == 1 {
+                    Ok(json!({"dependencies":[2]}))
+                } else {
+                    Ok(json!({"source_key":"bbp-windows"}))
+                }
+            });
+            assert!(result.unwrap_err().contains("Blender"));
+        }
+    }
     fn wait_for_sky_prompt(job: &Job) {
         let deadline = Instant::now() + Duration::from_secs(5);
         while job.progress().sky_prompt.is_none() {

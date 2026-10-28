@@ -6,7 +6,7 @@ use iced::{
     },
 };
 const CONTROL_WIDTH: f32 = 184.0;
-const ROW_HEIGHT: f32 = 36.0;
+pub(super) const ROW_HEIGHT: f32 = 36.0;
 fn text_input<'a>(placeholder: &str, value: &str) -> iced::widget::TextInput<'a, Message> {
     iced::widget::text_input(placeholder, value)
         .size(14)
@@ -34,7 +34,7 @@ fn checkbox<'a>(checked: bool) -> iced::widget::Checkbox<'a, Message> {
         .text_size(14)
         .style(style::check)
 }
-fn pick_list<'a, T, L, V>(
+pub(super) fn pick_list<'a, T, L, V>(
     options: L,
     selected: Option<V>,
     on_selected: impl Fn(T) -> Message + 'a,
@@ -51,12 +51,12 @@ where
         .style(style::select)
         .menu_style(style::select_menu)
 }
-fn scrollable<'a>(
+pub(super) fn scrollable<'a>(
     content: impl Into<Element<'a, Message>>,
 ) -> iced::widget::Scrollable<'a, Message> {
     iced::widget::scrollable(content).style(style::scroll)
 }
-fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
+pub(super) fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
     let content: Element<'a, Message> = if let Some(icon) = crate::icons::for_label(label) {
         crate::icons::label(icon, crate::l10n::text(label))
     } else {
@@ -68,7 +68,7 @@ fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Messa
         .on_press_maybe(enabled.then_some(message))
         .into()
 }
-fn separator<'a>() -> Element<'a, Message> {
+pub(super) fn separator<'a>() -> Element<'a, Message> {
     container(rule::horizontal(1)).padding([8, 0]).into()
 }
 fn resource_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
@@ -136,6 +136,7 @@ impl App {
         } else {
             let body = match self.page {
                 Page::Hub => self.online_resources(),
+                Page::Mapping => self.mapping_view(),
                 Page::Local | Page::Maps | Page::Mods | Page::Assets => self.resources(),
                 Page::Config | Page::Data => self.configuration(),
                 Page::Profiles => self.profiles(),
@@ -167,23 +168,26 @@ impl App {
         let base = if let Some(notice) = &self.notice {
             let alpha = notice.opacity();
             let toast = opaque(
-                container(
-                    row![
-                        text(&notice.text)
-                            .size(14)
-                            .color(colors.text.scale_alpha(alpha))
-                            .width(Fill),
-                        button(crate::icons::view(crate::icons::Icon::Close, 16.0))
-                            .padding([2, 7])
-                            .style(style::quiet)
-                            .on_press(Message::Dismiss)
-                    ]
-                    .spacing(12)
-                    .align_y(Alignment::Center),
+                iced::widget::mouse_area(
+                    container(
+                        row![
+                            text(&notice.text)
+                                .size(14)
+                                .color(colors.text.scale_alpha(alpha))
+                                .width(Fill),
+                            button(crate::icons::view(crate::icons::Icon::Close, 16.0))
+                                .padding([2, 7])
+                                .style(style::quiet)
+                                .on_press(Message::Dismiss)
+                        ]
+                        .spacing(12)
+                        .align_y(Alignment::Center),
+                    )
+                    .padding(14)
+                    .width(440)
+                    .style(move |theme| style::toast(theme, alpha)),
                 )
-                .padding(14)
-                .width(440)
-                .style(move |theme| style::toast(theme, alpha)),
+                .on_press(Message::Dismiss),
             );
             stack![
                 base,
@@ -438,6 +442,7 @@ impl App {
     fn section_tabs(&self) -> Element<'_, Message> {
         if self.page.section() == Page::Maps {
             let online = self.page == Page::Hub;
+            let mapping = self.page == Page::Mapping;
             let source = row![
                 button(text("在线").size(14))
                     .padding([6, 12])
@@ -447,23 +452,30 @@ impl App {
                 button(text("本地").size(14))
                     .padding([6, 12])
                     .height(32)
-                    .style(style::tab(!online))
+                    .style(style::tab(!online && !mapping))
                     .on_press(Message::ResourceSource(false)),
+                button(text("制图").size(14))
+                    .padding([6, 12])
+                    .height(32)
+                    .style(style::tab(mapping))
+                    .on_press(Message::Page(Page::Mapping)),
             ]
             .spacing(2)
             .align_y(Alignment::Center);
             let mut tabs = row![container(source).padding(2).style(style::tabs)]
                 .spacing(16)
                 .align_y(Alignment::Center);
-            tabs = tabs.push(pick_list(
-                crate::hub::Category::ALL.to_vec(),
-                Some(if online {
-                    self.hub.query.category
-                } else {
-                    self.local_category
-                }),
-                Message::ResourceCategory,
-            ));
+            if !mapping {
+                tabs = tabs.push(pick_list(
+                    crate::hub::Category::ALL.to_vec(),
+                    Some(if online {
+                        self.hub.query.category
+                    } else {
+                        self.local_category
+                    }),
+                    Message::ResourceCategory,
+                ));
+            }
             return tabs
                 .push(space::horizontal())
                 .push(action(
@@ -700,14 +712,20 @@ impl App {
         content = content.push(
             row![
                 button(text(crate::l10n::text("选择已有游戏")).size(14))
-                    .padding([10, 14])
+                    .height(40)
+                    .padding([8, 14])
                     .style(style::primary)
                     .on_press_maybe(
                         (!self.locked() && !self.picking_folder).then_some(Message::PickFolder)
                     ),
-                action("下载并安装", Message::Page(Page::Install), !self.locked()),
+                button(text(crate::l10n::text("下载并安装")).size(14))
+                    .height(40)
+                    .padding([8, 14])
+                    .style(style::secondary)
+                    .on_press_maybe((!self.locked()).then_some(Message::Page(Page::Install))),
             ]
-            .spacing(12),
+            .spacing(12)
+            .align_y(Alignment::Center),
         );
         container(container(content).max_width(480))
             .padding(28)
@@ -798,6 +816,13 @@ impl App {
             };
             let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
                 let mut menu = column![].spacing(3).width(156);
+                if kind == Kind::Maps && !entry.directory && !entry.disabled {
+                    menu = menu.push(menu_action(
+                        "在 Blender 中编辑",
+                        Message::Mapping(mapping::Action::OpenMap(entry.path.clone())),
+                        !self.locked(),
+                    ));
+                }
                 if kind == Kind::Mods && !entry.directory {
                     menu = menu.push(menu_action(
                         "配置",

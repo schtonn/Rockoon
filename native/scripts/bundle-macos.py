@@ -1,6 +1,7 @@
 """Package the native executable with the existing Wine runtime; no WebView."""
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -28,7 +29,7 @@ with (app / "Contents/Info.plist").open("wb") as file:
         "CFBundleIdentifier": "dev.schtonn.rockoon.native",
         "CFBundleName": "Rockoon",
         "CFBundlePackageType": "APPL",
-        "CFBundleShortVersionString": "0.2.0",
+        "CFBundleShortVersionString": re.search(r'^version\s*=\s*"([^\"]+)"', (repo / "native/Cargo.toml").read_text(), re.MULTILINE)[1],
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
         "CFBundleURLTypes": [{"CFBundleURLName": "Rockoon import", "CFBundleURLSchemes": ["rockoon"]}],

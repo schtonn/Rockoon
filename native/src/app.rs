@@ -13,12 +13,14 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 mod catalog;
+mod mapping;
 mod views;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Home,
     Hub,
+    Mapping,
     Local,
     Maps,
     Mods,
@@ -34,7 +36,9 @@ pub enum Page {
 impl Page {
     fn section(self) -> Self {
         match self {
-            Self::Hub | Self::Local | Self::Maps | Self::Mods | Self::Assets => Self::Maps,
+            Self::Hub | Self::Mapping | Self::Local | Self::Maps | Self::Mods | Self::Assets => {
+                Self::Maps
+            }
             Self::Install | Self::Config | Self::Data | Self::Profiles => Self::Config,
             other => other,
         }
@@ -51,6 +55,7 @@ impl Page {
         match self {
             Self::Home => "Ballance",
             Self::Hub => "在线",
+            Self::Mapping => "制图",
             Self::Local => "本地",
             Self::Maps => "地图",
             Self::Mods => "模组",
@@ -108,6 +113,8 @@ pub struct Startup {
 #[derive(Clone, Debug)]
 pub enum Message {
     Hub(catalog::Action),
+    Mapping(mapping::Action),
+    MappingMaps,
     Startup(Result<Startup, String>),
     FolderMenu,
     PickFolder,
@@ -287,6 +294,7 @@ struct KeyCapture {
 }
 pub struct App {
     hub: crate::hub::State,
+    mapping: mapping::State,
     home_active: bool,
     detached_tas: bool,
     tas_level: u8,
@@ -374,6 +382,7 @@ impl App {
     pub fn new() -> (Self, Task<Message>) {
         let state = Self {
             hub: crate::hub::State::default(),
+            mapping: mapping::State::default(),
             home_active: true,
             detached_tas: std::env::args().any(|a| a == "--tas-editor"),
             tas_level: 1,
@@ -583,6 +592,7 @@ impl App {
                 }
             }
             Page::Hub => return self.ensure_catalog(),
+            Page::Mapping => return self.refresh_mapping(false),
             Page::Config | Page::Data => {
                 if let Some(root) = self.root() {
                     self.busy = true;
@@ -760,6 +770,9 @@ impl App {
             self.after_save = Some(Box::new(message));
             return self.save_document(false);
         }
+        if let Message::Mapping(action) = message {
+            return self.update_mapping(action);
+        }
         if let Message::Hub(action) = message {
             return self.update_catalog(action);
         }
@@ -778,7 +791,11 @@ impl App {
             self.close_menus();
         }
         match message {
-            Message::Hub(_) => unreachable!(),
+            Message::Hub(_) | Message::Mapping(_) => unreachable!(),
+            Message::MappingMaps => {
+                self.local_category = crate::hub::Category::Map;
+                return self.update(Message::Page(Page::Maps));
+            }
             Message::FolderMenu => self.folder_menu = !self.folder_menu,
             Message::CloseMenus => self.close_menus(),
             Message::NoticeTick => {
@@ -1753,6 +1770,18 @@ impl App {
                     && let Request::Update { root, .. } = &job.request
                 {
                     self.update_path = Some(root.join("native-update.bin"));
+                }
+                if self
+                    .jobs
+                    .iter()
+                    .find(|j| j.id == id)
+                    .is_some_and(|j| matches!(j.request, Request::Bbp { .. }))
+                {
+                    match result {
+                        Ok(message) => self.notify(message),
+                        Err(error) => self.error(error),
+                    }
+                    return self.refresh_mapping(false);
                 }
                 let root = self
                     .jobs

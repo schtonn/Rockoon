@@ -2,6 +2,7 @@
 
 mod app;
 mod assets;
+mod blender;
 mod bounds;
 mod components;
 mod config;

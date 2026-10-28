@@ -26,6 +26,7 @@ impl std::fmt::Display for ColorMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct Preferences {
     pub instance_path: Option<PathBuf>,
+    pub blender_path: Option<PathBuf>,
     pub hide_on_launch: bool,
     pub map_only: bool,
     pub level_slot: u8,
@@ -42,6 +43,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             instance_path: None,
+            blender_path: None,
             hide_on_launch: false,
             map_only: true,
             level_slot: 0,

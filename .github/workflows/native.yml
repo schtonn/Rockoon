@@ -3,9 +3,9 @@ name: Native desktop
 on:
   push:
     branches: [codex/native-desktop]
-    paths: ["native/**", "src-tauri/src/ballance/**", "src-tauri/src/commands/**", "src-tauri/resources/vanilla/**", "src/i18n/languages/**", ".github/workflows/native.yml"]
+    paths: ["native/**", "src-tauri/src/ballance/**", "src-tauri/src/commands/**", "src-tauri/resources/vanilla/**", "src/i18n/languages/**", ".github/workflows/native.yml", ".github/workflows/native-release.yml"]
   pull_request:
-    paths: ["native/**", "src-tauri/src/ballance/**", "src-tauri/src/commands/**", "src-tauri/resources/vanilla/**", "src/i18n/languages/**", ".github/workflows/native.yml"]
+    paths: ["native/**", "src-tauri/src/ballance/**", "src-tauri/src/commands/**", "src-tauri/resources/vanilla/**", "src/i18n/languages/**", ".github/workflows/native.yml", ".github/workflows/native-release.yml"]
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
-      - run: cargo fmt --manifest-path native/Cargo.toml --check
+      - run: cargo fmt --manifest-path native/Cargo.toml --package rockoon-native --check
       - run: cargo clippy --manifest-path native/Cargo.toml --locked --all-targets -- -D warnings
       # The inherited Explorer test assumes an interactive Windows desktop.
       - run: cargo test --manifest-path native/Cargo.toml --locked --workspace -- --skip finds_explorer_and_rejects_non_player
@@ -86,7 +86,12 @@ jobs:
           zig cc -target x86-windows-gnu -Os -s -o src-tauri/resources-macos/wine/BallanceLauncher.exe src-launcher/launch.c -luser32 -lshell32
       - name: Bundle native application
         run: python3 native/scripts/bundle-macos.py
+      - name: Hash macOS bundle
+        run: |
+          shasum -a 256 native/target/bundle/Rockoon-native-macos-universal.tar.gz | awk '{print $1}' > native/target/bundle/Rockoon-native-macos-universal.tar.gz.sha256
       - uses: actions/upload-artifact@v4
         with:
           name: Rockoon-native-macos-universal
-          path: native/target/bundle/Rockoon-native-macos-universal.tar.gz
+          path: |
+            native/target/bundle/Rockoon-native-macos-universal.tar.gz
+            native/target/bundle/Rockoon-native-macos-universal.tar.gz.sha256

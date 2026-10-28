@@ -170,11 +170,18 @@ pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     }
 }
 pub fn tab(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
-    nav(selected)
+    move |theme, status| {
+        let mut style = nav(selected)(theme, status);
+        if let Some(iced::Background::Color(color)) = style.background {
+            style.background = Some(color.scale_alpha(0.76).into());
+        }
+        style
+    }
 }
 pub fn tabs(theme: &Theme) -> container::Style {
     let mut style = menu(theme);
     style.border.radius = 6.0.into();
+    style.background = Some(colors(theme).surface.scale_alpha(0.32).into());
     style
 }
 pub fn menu(theme: &Theme) -> container::Style {
@@ -209,7 +216,14 @@ pub fn input(theme: &Theme, status: text_input::Status) -> text_input::Style {
         _ => c.line,
     };
     text_input::Style {
-        background: c.surface.into(),
+        background: c
+            .surface
+            .scale_alpha(match status {
+                text_input::Status::Focused { .. } => 0.58,
+                text_input::Status::Hovered => 0.48,
+                _ => 0.36,
+            })
+            .into(),
         border: outline(color),
         icon: c.muted,
         placeholder: c.muted,
@@ -232,7 +246,13 @@ pub fn select(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
         text_color: c.text,
         placeholder_color: c.muted,
         handle_color: c.muted,
-        background: background.into(),
+        background: background
+            .scale_alpha(match status {
+                pick_list::Status::Opened { .. } => 0.76,
+                pick_list::Status::Hovered => 0.58,
+                pick_list::Status::Active => 0.36,
+            })
+            .into(),
         border: outline(color),
     }
 }
@@ -319,7 +339,7 @@ pub fn range(theme: &Theme, status: slider::Status) -> slider::Style {
 pub fn catalog_card(theme: &Theme) -> container::Style {
     let c = colors(theme);
     container::Style {
-        background: Some(c.surface.into()),
+        background: Some(c.surface.scale_alpha(0.60).into()),
         border: Border {
             color: c.line,
             width: 1.0,

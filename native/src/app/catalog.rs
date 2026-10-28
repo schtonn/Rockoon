@@ -279,6 +279,9 @@ impl App {
                 let Some(package) = package else {
                     return Task::none();
                 };
+                if package.source_key.starts_with("bbp-") {
+                    return self.update(Message::Page(Page::Mapping));
+                }
                 if package.managed_component().is_some() {
                     return self.update(Message::Page(Page::Install));
                 }
@@ -458,6 +461,8 @@ impl App {
         let installed = self.hub.installed(package);
         let label = if busy {
             "安装中…"
+        } else if package.source_key.starts_with("bbp-") {
+            "制图工具"
         } else if package.managed_component().is_some() {
             "管理组件"
         } else if installed {
@@ -630,6 +635,8 @@ impl App {
         }
         let label = if self.hub_busy(package.id) {
             "安装中…"
+        } else if package.source_key.starts_with("bbp-") {
+            "制图工具"
         } else if package.managed_component().is_some() {
             "管理组件"
         } else if self.root().is_none() {
