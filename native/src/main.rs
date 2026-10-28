@@ -16,6 +16,9 @@ mod jobs;
 mod keys;
 mod l10n;
 mod launch;
+mod local_resources;
+#[cfg(target_os = "macos")]
+mod mac_protocol;
 mod media;
 mod popup;
 mod preferences;

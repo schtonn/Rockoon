@@ -1,5 +1,7 @@
+mod viewer;
 use crate::workspace::error;
 use std::{collections::BTreeMap, path::Path};
+pub use viewer::view;
 #[derive(Debug)]
 pub struct Skybox {
     faces: BTreeMap<String, bitmap::RgbaImage>,
@@ -43,8 +45,8 @@ impl Skybox {
         }
         Ok(Self { faces })
     }
-    pub fn render(&self, yaw: f32, pitch: f32) -> iced::widget::image::Handle {
-        let (width, height) = (768, 384);
+    pub fn render(&self, yaw: f32, pitch: f32, full: bool) -> iced::widget::image::Handle {
+        let (width, height) = if full { (768, 384) } else { (512, 256) };
         let mut pixels = Vec::with_capacity((width * height * 4) as usize);
         let (sy, cy) = yaw.to_radians().sin_cos();
         let (sp, cp) = pitch.to_radians().sin_cos();
@@ -87,5 +89,84 @@ impl Skybox {
             }
         }
         iced::widget::image::Handle::from_rgba(width, height, pixels)
+    }
+}
+
+/// Keep one render in flight and only the newest requested view behind it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frame {
+    pub epoch: u64,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub full: bool,
+}
+#[derive(Default)]
+pub struct RenderQueue {
+    pub active: Option<Frame>,
+    latest: Option<Frame>,
+}
+impl RenderQueue {
+    pub fn request(&mut self, frame: Frame) -> Option<Frame> {
+        if self.active.is_some() {
+            self.latest = Some(frame);
+            None
+        } else {
+            self.active = Some(frame);
+            Some(frame)
+        }
+    }
+    pub fn complete(&mut self, frame: Frame) -> Option<Frame> {
+        if self.active != Some(frame) {
+            return None;
+        }
+        self.active = self.latest.take();
+        self.active
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dragging_coalesces_to_latest_angle_and_preserves_final_full_resolution() {
+        let mut queue = RenderQueue::default();
+        let first = Frame {
+            epoch: 1,
+            yaw: 0.0,
+            pitch: 0.0,
+            full: false,
+        };
+        assert_eq!(queue.request(first), Some(first));
+        for yaw in 1..100 {
+            assert!(
+                queue
+                    .request(Frame {
+                        yaw: yaw as f32,
+                        ..first
+                    })
+                    .is_none()
+            );
+        }
+        let final_frame = Frame {
+            yaw: 100.0,
+            full: true,
+            ..first
+        };
+        assert!(queue.request(final_frame).is_none());
+        assert_eq!(queue.complete(first), Some(final_frame));
+        assert!(queue.complete(final_frame).is_none());
+        assert!(queue.active.is_none());
+    }
+    #[test]
+    fn an_old_preview_cannot_complete_the_new_preview_render() {
+        let mut queue = RenderQueue::default();
+        let frame = Frame {
+            epoch: 2,
+            yaw: 0.0,
+            pitch: 0.0,
+            full: true,
+        };
+        queue.request(frame);
+        assert!(queue.complete(Frame { epoch: 1, ..frame }).is_none());
+        assert_eq!(queue.active, Some(frame));
     }
 }

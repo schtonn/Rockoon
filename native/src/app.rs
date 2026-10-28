@@ -14,6 +14,8 @@ use std::{
 };
 mod catalog;
 mod mapping;
+mod runtime;
+mod sky_preview;
 mod views;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +131,7 @@ pub enum Message {
     Open(PathBuf),
     Opened(Result<(), String>),
     EntryMenu(PathBuf),
+    ExpandSky(PathBuf),
     Browse(PathBuf),
     Listed(u64, Result<Vec<Entry>, String>),
     ResourceCategory(crate::hub::Category),
@@ -158,6 +161,11 @@ pub enum Message {
     Previewed(u64, Result<iced::widget::image::Handle, String>),
     SkyLoaded(u64, Result<std::sync::Arc<crate::sky::Skybox>, String>),
     SkyAngle(bool, f32),
+    SkyOrbit(f32, f32),
+    SkyRendered(
+        crate::sky::Frame,
+        Result<iced::widget::image::Handle, String>,
+    ),
     SkyRender,
     ClosePreview,
     Sound(PathBuf),
@@ -232,16 +240,7 @@ pub enum Message {
     UpdateChecked(Result<Option<crate::updates::Release>, String>),
     DownloadUpdate,
     ApplyUpdate,
-    #[cfg(not(windows))]
-    WineSetup,
-    #[cfg(not(windows))]
-    WineChoose,
-    #[cfg(not(windows))]
-    WineChosen(Option<PathBuf>),
-    #[cfg(not(windows))]
-    WineConfig,
-    #[cfg(target_os = "macos")]
-    Rosetta,
+    Wine(runtime::Action),
     Quit,
     Exit,
     OpenTasProject(PathBuf),
@@ -295,6 +294,7 @@ struct KeyCapture {
 pub struct App {
     hub: crate::hub::State,
     mapping: mapping::State,
+    wine: runtime::State,
     home_active: bool,
     detached_tas: bool,
     tas_level: u8,
@@ -356,11 +356,13 @@ pub struct App {
     install_bmlplus: bool,
     preview: Option<iced::widget::image::Handle>,
     skybox: Option<std::sync::Arc<crate::sky::Skybox>>,
+    sky_frames: crate::sky::RenderQueue,
     sky_yaw: f32,
     sky_pitch: f32,
     preview_path: Option<PathBuf>,
     sound: Option<PathBuf>,
     entry_menu: Option<PathBuf>,
+    expanded_skies: std::collections::HashSet<PathBuf>,
     prompt: Option<Prompt>,
     deleted: Option<(PathBuf, PathBuf)>,
     launch_warning: Option<(Option<PathBuf>, Vec<String>)>,
@@ -383,6 +385,7 @@ impl App {
         let state = Self {
             hub: crate::hub::State::default(),
             mapping: mapping::State::default(),
+            wine: runtime::State::default(),
             home_active: true,
             detached_tas: std::env::args().any(|a| a == "--tas-editor"),
             tas_level: 1,
@@ -443,12 +446,14 @@ impl App {
             install_player: true,
             install_bmlplus: true,
             skybox: None,
+            sky_frames: crate::sky::RenderQueue::default(),
             sky_yaw: 0.0,
             sky_pitch: 0.0,
             preview: None,
             preview_path: None,
             sound: None,
             entry_menu: None,
+            expanded_skies: std::collections::HashSet::new(),
             prompt: None,
             deleted: None,
             launch_warning: None,
@@ -465,30 +470,35 @@ impl App {
             .find(|p| p.is_dir());
         (
             state,
-            Task::perform(
-                background(move || {
-                    let mut prefs = preferences::load()?;
-                    if let Ok(stats) = preferences::stats() {
-                        prefs.playtime = stats.total;
-                        prefs.last_played = stats.last;
-                    }
-                    let (instance, problem) = match requested
-                        .or_else(|| prefs.instance_path.clone())
-                        .map(game::discover)
-                        .transpose()
-                    {
-                        Ok(instance) => (instance, None),
-                        Err(error) => (None, Some(format!("之前的游戏目录无法使用：{error}"))),
-                    };
-                    Ok(Startup {
-                        instance,
-                        preferences: prefs,
-                        problem,
-                        protocol_ready: crate::system::protocol_registered(),
-                    })
+            Task::batch([
+                Task::perform(
+                    background(move || {
+                        let mut prefs = preferences::load()?;
+                        if let Ok(stats) = preferences::stats() {
+                            prefs.playtime = stats.total;
+                            prefs.last_played = stats.last;
+                        }
+                        let (instance, problem) = match requested
+                            .or_else(|| prefs.instance_path.clone())
+                            .map(game::discover)
+                            .transpose()
+                        {
+                            Ok(instance) => (instance, None),
+                            Err(error) => (None, Some(format!("之前的游戏目录无法使用：{error}"))),
+                        };
+                        Ok(Startup {
+                            instance,
+                            preferences: prefs,
+                            problem,
+                            protocol_ready: crate::system::protocol_registered(),
+                        })
+                    }),
+                    Message::Startup,
+                ),
+                Task::perform(background(runtime::scan), |r| {
+                    Message::Wine(runtime::Action::Scanned(r))
                 }),
-                Message::Startup,
-            ),
+            ]),
         )
     }
     fn root(&self) -> Option<PathBuf> {
@@ -521,6 +531,7 @@ impl App {
     }
     fn locked(&self) -> bool {
         self.busy
+            || self.wine.working
             || self.mutating
             || self.launching
             || self.running.is_some()
@@ -562,6 +573,7 @@ impl App {
         self.busy = false;
         self.preview_revision += 1;
         self.skybox = None;
+        self.sky_frames = crate::sky::RenderQueue::default();
         self.preview = None;
         self.entry_menu = None;
         if let Some(kind) = self.kind()
@@ -679,6 +691,10 @@ impl App {
         iced::window::latest().map(Message::Show)
     }
     fn launch(&mut self, map: Option<PathBuf>) -> Task<Message> {
+        if self.wine.needs_setup() {
+            self.page = Page::Home;
+            return self.refresh_wine();
+        }
         if self.locked() {
             return Task::none();
         }
@@ -914,6 +930,9 @@ impl App {
                     Ok(instance) => {
                         self.preferences.instance_path = Some(instance.root.clone());
                         self.instance = Some(instance);
+                        if self.wine.needs_setup() {
+                            self.page = Page::Home;
+                        }
                         self.setup_problem = None;
                         self.document = None;
                         self.directory = PathBuf::new();
@@ -978,6 +997,11 @@ impl App {
                 );
             }
             Message::Opened(Err(e)) => self.error(e),
+            Message::ExpandSky(key) => {
+                if !self.expanded_skies.remove(&key) {
+                    self.expanded_skies.insert(key);
+                }
+            }
             Message::EntryMenu(path) => {
                 self.entry_menu = if self.entry_menu.as_ref() == Some(&path) {
                     None
@@ -1335,11 +1359,11 @@ impl App {
                 let revision = self.preview_revision;
                 self.preview_path = Some(path.clone());
                 self.skybox = None;
-                if self.kind() == Some(Kind::Skies)
-                    || self
-                        .entries
-                        .iter()
-                        .any(|e| e.path == path && e.kind == Kind::Skies)
+                self.sky_frames = crate::sky::RenderQueue::default();
+                if self
+                    .entries
+                    .iter()
+                    .any(|e| e.path == path && crate::local_resources::is_sky_face(e))
                 {
                     return Task::perform(
                         background(move || {
@@ -1372,18 +1396,15 @@ impl App {
                 } else {
                     self.sky_pitch = value
                 }
+                return self.render_sky(false);
             }
-            Message::SkyRender => {
-                if let Some(skybox) = self.skybox.clone() {
-                    self.preview_revision += 1;
-                    let revision = self.preview_revision;
-                    let (yaw, pitch) = (self.sky_yaw, self.sky_pitch);
-                    return Task::perform(
-                        background(move || Ok(skybox.render(yaw, pitch))),
-                        move |r| Message::Previewed(revision, r),
-                    );
-                }
+            Message::SkyOrbit(dx, dy) => {
+                self.sky_yaw = (self.sky_yaw + dx + 180.0).rem_euclid(360.0) - 180.0;
+                self.sky_pitch = (self.sky_pitch + dy).clamp(-80.0, 80.0);
+                return self.render_sky(false);
             }
+            Message::SkyRendered(frame, result) => return self.sky_rendered(frame, result),
+            Message::SkyRender => return self.render_sky(true),
             Message::Previewed(revision, result) => {
                 if revision == self.preview_revision {
                     match result {
@@ -1397,6 +1418,7 @@ impl App {
                 self.preview = None;
                 self.preview_path = None;
                 self.skybox = None;
+                self.sky_frames = crate::sky::RenderQueue::default();
             }
             Message::Sound(path) => {
                 if self.sound.as_ref() == Some(&path) {
@@ -1783,6 +1805,20 @@ impl App {
                     }
                     return self.refresh_mapping(false);
                 }
+                #[cfg(not(windows))]
+                if self
+                    .jobs
+                    .iter()
+                    .find(|j| j.id == id)
+                    .is_some_and(|j| matches!(j.request, Request::Wine { .. }))
+                {
+                    match result {
+                        Ok(message) => self.notify(message),
+                        Err(error) => self.wine.error = Some(error),
+                    }
+                    self.page = Page::Home;
+                    return self.refresh_wine();
+                }
                 let root = self
                     .jobs
                     .iter()
@@ -1837,6 +1873,10 @@ impl App {
             }
             Message::ClearJobs => self.jobs.retain(|j| !self.finished_jobs.contains(&j.id)),
             Message::Launch(map) if !self.locked() => {
+                if self.wine.needs_setup() {
+                    self.page = Page::Home;
+                    return self.refresh_wine();
+                }
                 if let Some(root) = self.root() {
                     self.launching = true;
                     let requested = map.clone();
@@ -1929,7 +1969,11 @@ impl App {
                 }
             }
             Message::Tick => {
-                if self.quitting && self.jobs.iter().all(|j| j.progress().done) && !self.mutating {
+                if self.quitting
+                    && self.jobs.iter().all(|j| j.progress().done)
+                    && !self.mutating
+                    && !self.wine.working
+                {
                     return self.update(Message::Exit);
                 }
                 let status = self.running.as_ref().map(|p| {
@@ -2287,7 +2331,7 @@ impl App {
             Message::ProtocolRegistered(result) => match result {
                 Ok(()) => {
                     self.protocol_ready = true;
-                    self.notify("已启用一键安装，可在资源站选择资源并点击“一键安装”");
+                    self.notify("已关联资源站安装链接，网页上的“一键安装”会打开 Rockoon");
                 }
                 Err(error) => self.error(error),
             },
@@ -2356,60 +2400,7 @@ impl App {
                     }
                 }
             }
-            #[cfg(not(windows))]
-            Message::WineSetup => {
-                if let Ok(root) = preferences::directory() {
-                    return self.start_job(Request::Wine { root });
-                }
-            }
-            #[cfg(not(windows))]
-            Message::WineChoose => {
-                return Task::perform(
-                    async {
-                        rfd::AsyncFileDialog::new()
-                            .set_title("选择 Wine .app 或根目录")
-                            .pick_folder()
-                            .await
-                            .map(|p| p.path().to_owned())
-                    },
-                    Message::WineChosen,
-                );
-            }
-            #[cfg(not(windows))]
-            Message::WineChosen(Some(path)) => {
-                return Task::perform(
-                    background(move || {
-                        rockoon_platform::wine::set_custom_wine(
-                            rockoon_platform::Context::default(),
-                            Some(path.display().to_string()),
-                        )
-                        .map(|_| ())
-                        .map_err(workspace::error)
-                    }),
-                    Message::Saved,
-                );
-            }
-            #[cfg(not(windows))]
-            Message::WineConfig => {
-                return Task::perform(
-                    background(|| {
-                        rockoon_platform::wine::open_wine_config(
-                            rockoon_platform::Context::default(),
-                        )
-                        .map_err(workspace::error)
-                    }),
-                    Message::Saved,
-                );
-            }
-            #[cfg(target_os = "macos")]
-            Message::Rosetta => {
-                return Task::perform(
-                    background(|| {
-                        rockoon_platform::wine::install_rosetta().map_err(workspace::error)
-                    }),
-                    Message::Saved,
-                );
-            }
+            Message::Wine(action) => return self.update_wine(action),
             Message::Quit => {
                 if self.tas.dirty {
                     self.prompt = Some(Prompt {
@@ -2422,7 +2413,11 @@ impl App {
                 return self.update(Message::Exit);
             }
             Message::Exit => {
-                if self.mutating || self.tas_busy || self.jobs.iter().any(|j| !j.progress().done) {
+                if self.mutating
+                    || self.wine.working
+                    || self.tas_busy
+                    || self.jobs.iter().any(|j| !j.progress().done)
+                {
                     self.quitting = true;
                     for job in &self.jobs {
                         if !job.progress().done && job.progress().cancellable {

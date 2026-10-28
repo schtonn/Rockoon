@@ -515,11 +515,25 @@ impl Job {
                 let context = rockoon_platform::Context {
                     progress: Some(Arc::new(move |phase| {
                         if let Ok(mut state) = state.lock() {
-                            state.phase = phase.into();
+                            state.phase = match phase {
+                                "importing" => "解压内置 Wine",
+                                "initializing" => "初始化游戏运行环境",
+                                other => other,
+                            }
+                            .into();
                         }
                     })),
                 };
-                rockoon_platform::wine::install_wine(context, None).map_err(error)?;
+                let status = rockoon_platform::wine::wine_status(context.clone()).map_err(error)?;
+                if !status.rosetta {
+                    return Err("请先在首页安装 Rosetta 2，再准备 Wine 环境".into());
+                }
+                if status.installed || status.custom_path.is_some() {
+                    self.phase("初始化游戏运行环境");
+                    rockoon_platform::wine::prepare_wine_prefix(context).map_err(error)?;
+                } else {
+                    rockoon_platform::wine::install_wine(context, None).map_err(error)?;
+                }
                 Ok("Wine 环境已准备".into())
             }
             Request::Game {

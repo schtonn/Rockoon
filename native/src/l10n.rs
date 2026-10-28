@@ -23,6 +23,66 @@ static WORDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
         serde_json::from_str(include_str!("../../src/i18n/languages/en.json")).unwrap_or_default();
     visit(&zh, &en, &mut map);
     for (zh, en) in [
+        (
+            "选好游戏后，会继续引导你准备 Wine 运行环境。",
+            "After choosing the game, set up Wine to run it.",
+        ),
+        ("准备运行环境", "Set up the game runtime"),
+        (
+            "Ballance 需要通过 Wine 运行，完成下面的准备后即可启动游戏。",
+            "Ballance runs through Wine. Complete the setup below to play.",
+        ),
+        ("游戏运行环境", "Game runtime"),
+        ("正在检查运行环境…", "Checking the game runtime…"),
+        ("已就绪", "Ready"),
+        ("自选 Wine", "Custom Wine"),
+        ("内置 Wine", "Bundled Wine"),
+        ("自选 Wine 无法运行", "Custom Wine cannot run"),
+        ("先安装 Rosetta 2", "Install Rosetta 2 first"),
+        ("初始化游戏环境", "Initialize game runtime"),
+        ("请选择已有 Wine", "Choose an installed Wine"),
+        ("Wine 路径", "Wine location"),
+        ("选择已有 Wine", "Choose installed Wine"),
+        ("使用内置 Wine", "Use bundled Wine"),
+        ("打开 Wine 设置", "Open Wine settings"),
+        ("安装 Rosetta 2", "Install Rosetta 2"),
+        ("重新检测", "Check again"),
+        (
+            "正在处理，请完成可能出现的系统窗口…",
+            "Working. Complete any system dialogs that appear…",
+        ),
+        (
+            "选择 Wine .app 或根目录",
+            "Choose a Wine app or root folder",
+        ),
+        (
+            "让 Apple 芯片运行 Wine 所需的 Intel 程序，安装时会出现系统授权窗口。",
+            "Runs the Intel programs required by Wine on Apple Silicon and asks for system authorization.",
+        ),
+        (
+            "用于运行 Windows 版 Ballance。",
+            "Runs the Windows version of Ballance.",
+        ),
+        (
+            "使用随软件附带的 Wine 或已选择的 Wine 准备游戏环境，初始化可能需要几十秒。",
+            "Prepares the game runtime using bundled or selected Wine and may take tens of seconds.",
+        ),
+        (
+            "可选择已安装的 Wine 应用或包含 bin/wine 的目录。",
+            "Choose a Wine app or a folder containing bin/wine.",
+        ),
+        (
+            "打开 Wine 自带的声音和显示设置。",
+            "Opens the sound and display settings included with Wine.",
+        ),
+        ("启动器更新", "Launcher updates"),
+        ("资源站安装链接", "Resource site install links"),
+        ("关联到 Rockoon", "Link to Rockoon"),
+        ("重新关联", "Relink"),
+        (
+            "让浏览器中的资源站安装链接打开 Rockoon，软件内安装无需关联。",
+            "Opens browser install links in Rockoon and is optional for installing inside the launcher.",
+        ),
         ("选择 Ballance", "Choose Ballance"),
         (
             "选择已有的游戏文件夹，或安装一份游戏。",

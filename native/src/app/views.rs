@@ -62,18 +62,29 @@ pub(super) fn action<'a>(label: &str, message: Message, enabled: bool) -> Elemen
     } else {
         text(crate::l10n::text(label)).size(14).into()
     };
-    button(content)
-        .padding([8, 12])
+    button(container(content).center_y(32))
+        .height(32)
+        .padding([0, 12])
         .style(style::secondary)
         .on_press_maybe(enabled.then_some(message))
+        .into()
+}
+fn more_button<'a>(message: Message) -> Element<'a, Message> {
+    button(crate::icons::view(crate::icons::Icon::More, 16.0))
+        .padding(6)
+        .width(28)
+        .height(28)
+        .style(style::quiet)
+        .on_press(message)
         .into()
 }
 pub(super) fn separator<'a>() -> Element<'a, Message> {
     container(rule::horizontal(1)).padding([8, 0]).into()
 }
 fn resource_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
-    button(text(crate::l10n::text(label)).size(14))
-        .padding([3, 8])
+    button(container(text(crate::l10n::text(label)).size(14)).center_y(26))
+        .height(26)
+        .padding([0, 8])
         .style(style::secondary)
         .on_press_maybe(enabled.then_some(message))
         .into()
@@ -374,10 +385,15 @@ impl App {
                     .width(Fill),
                     action("关闭", Message::ClosePreview, true)
                 ],
-                image(preview.clone())
-                    .width(Fill)
-                    .height(Fill)
-                    .content_fit(iced::ContentFit::Contain)
+                if self.skybox.is_some() {
+                    crate::sky::view(preview.clone())
+                } else {
+                    image(preview.clone())
+                        .width(Fill)
+                        .height(Fill)
+                        .content_fit(iced::ContentFit::Contain)
+                        .into()
+                }
             ]
             .spacing(12);
             if self.skybox.is_some() {
@@ -444,18 +460,18 @@ impl App {
             let online = self.page == Page::Hub;
             let mapping = self.page == Page::Mapping;
             let source = row![
-                button(text("在线").size(14))
-                    .padding([6, 12])
+                button(container(text("在线").size(14)).center_y(Fill))
+                    .padding([0, 12])
                     .height(32)
                     .style(style::tab(online))
                     .on_press(Message::ResourceSource(true)),
-                button(text("本地").size(14))
-                    .padding([6, 12])
+                button(container(text("本地").size(14)).center_y(Fill))
+                    .padding([0, 12])
                     .height(32)
                     .style(style::tab(!online && !mapping))
                     .on_press(Message::ResourceSource(false)),
-                button(text("制图").size(14))
-                    .padding([6, 12])
+                button(container(text("制图").size(14)).center_y(Fill))
+                    .padding([0, 12])
                     .height(32)
                     .style(style::tab(mapping))
                     .on_press(Message::Page(Page::Mapping)),
@@ -498,16 +514,19 @@ impl App {
         for &page in pages {
             tabs = tabs.push(
                 button(
-                    text(crate::l10n::text(if page == Page::Config {
-                        "选项"
-                    } else if page == Page::Profiles {
-                        "配置集"
-                    } else {
-                        page.label()
-                    }))
-                    .size(14),
+                    container(
+                        text(crate::l10n::text(if page == Page::Config {
+                            "选项"
+                        } else if page == Page::Profiles {
+                            "配置集"
+                        } else {
+                            page.label()
+                        }))
+                        .size(14),
+                    )
+                    .center_y(Fill),
                 )
-                .padding([6, 12])
+                .padding([0, 12])
                 .height(32)
                 .style(style::tab(self.page == page))
                 .on_press(Message::Page(page)),
@@ -627,6 +646,9 @@ impl App {
         if self.instance.is_none() {
             return self.setup();
         }
+        if self.wine.needs_setup() && self.running.is_none() {
+            return self.wine_guide();
+        }
         let enabled =
             !self.busy && !self.launching && !self.jobs.iter().any(|j| !j.progress().done);
         let (label, message) = if self.launching {
@@ -709,18 +731,26 @@ impl App {
         if let Some(problem) = &self.setup_problem {
             content = content.push(text(problem).size(14));
         }
+        if cfg!(not(windows)) {
+            content = content.push(
+                text(crate::l10n::text(
+                    "选好游戏后，会继续引导你准备 Wine 运行环境。",
+                ))
+                .size(14),
+            );
+        }
         content = content.push(
             row![
-                button(text(crate::l10n::text("选择已有游戏")).size(14))
+                button(container(text(crate::l10n::text("选择已有游戏")).size(14)).center_y(Fill))
                     .height(40)
-                    .padding([8, 14])
+                    .padding([0, 14])
                     .style(style::primary)
                     .on_press_maybe(
                         (!self.locked() && !self.picking_folder).then_some(Message::PickFolder)
                     ),
-                button(text(crate::l10n::text("下载并安装")).size(14))
+                button(container(text(crate::l10n::text("下载并安装")).size(14)).center_y(Fill))
                     .height(40)
-                    .padding([8, 14])
+                    .padding([0, 14])
                     .style(style::secondary)
                     .on_press_maybe((!self.locked()).then_some(Message::Page(Page::Install))),
             ]
@@ -777,134 +807,23 @@ impl App {
             crumbs = crumbs.push(action("停止试听", Message::StopSound, true));
         }
         let mut list = column![].spacing(0);
-        for entry in self
-            .entries
-            .iter()
-            .filter(|e| workspace::matches(&e.name, &self.search))
-        {
-            let kind = entry.kind;
-            let primary: Element<'_, Message> = if entry.directory {
-                resource_action("打开", Message::Browse(entry.path.clone()), !self.busy)
-            } else {
-                match kind {
-                    Kind::Maps => resource_action(
-                        "游玩",
-                        Message::Launch(Some(entry.path.clone())),
-                        !self.locked() && !entry.disabled,
-                    ),
-                    Kind::Mods => iced::widget::toggler(!entry.disabled)
-                        .size(18)
-                        .style(style::toggle)
-                        .on_toggle_maybe((!self.locked()).then_some({
-                            let entry = entry.clone();
-                            move |_| Message::Toggle(entry.clone())
-                        }))
-                        .into(),
-                    Kind::Skies | Kind::Textures => {
-                        resource_action("预览", Message::Preview(entry.path.clone()), true)
-                    }
-                    Kind::Sounds => resource_action(
-                        if self.sound.as_ref() == Some(&entry.path) {
-                            "停止"
-                        } else {
-                            "试听"
-                        },
-                        Message::Sound(entry.path.clone()),
-                        true,
-                    ),
+        let rows = crate::local_resources::rows(&self.entries, &self.search);
+        let visible = rows.len();
+        for item in rows {
+            match item {
+                crate::local_resources::LocalRow::File(entry) => {
+                    list = list.push(self.local_entry(entry, &root, false))
                 }
-            };
-            let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
-                let mut menu = column![].spacing(3).width(156);
-                if kind == Kind::Maps && !entry.directory && !entry.disabled {
-                    menu = menu.push(menu_action(
-                        "在 Blender 中编辑",
-                        Message::Mapping(mapping::Action::OpenMap(entry.path.clone())),
-                        !self.locked(),
-                    ));
-                }
-                if kind == Kind::Mods && !entry.directory {
-                    menu = menu.push(menu_action(
-                        "配置",
-                        Message::FindConfig(entry.path.clone()),
-                        true,
-                    ));
-                }
-                menu = menu
-                    .push(menu_action(
-                        "打开文件夹",
-                        Message::Open(if entry.directory {
-                            entry.path.clone()
-                        } else {
-                            entry.path.parent().unwrap_or(&root).to_owned()
-                        }),
-                        true,
-                    ))
-                    .push(menu_action(
-                        "重命名",
-                        Message::Prompt(PromptKind::Rename(entry.path.clone())),
-                        !self.locked(),
-                    ))
-                    .push(menu_action(
-                        "移动",
-                        Message::Move(entry.path.clone()),
-                        !self.locked(),
-                    ))
-                    .push(menu_action(
-                        "删除",
-                        Message::Prompt(PromptKind::Delete(entry.path.clone())),
-                        !self.locked(),
-                    ));
-                Some(menu_panel(menu).into())
-            } else {
-                None
-            };
-            let glyph = if entry.directory {
-                crate::icons::Icon::Folder
-            } else {
-                match kind {
-                    Kind::Maps => crate::icons::Icon::Map,
-                    Kind::Mods => crate::icons::Icon::Puzzle,
-                    Kind::Sounds => crate::icons::Icon::Volume,
-                    _ => crate::icons::Icon::Image,
-                }
-            };
-            let line = row![
-                crate::icons::view(glyph, 18.0),
-                iced::widget::mouse_area(container(text(&entry.name).size(14)).width(Fill))
-                    .on_double_click(if entry.directory {
-                        Message::Browse(entry.path.clone())
-                    } else {
-                        match kind {
-                            Kind::Maps => Message::Launch(Some(entry.path.clone())),
-                            Kind::Mods => Message::FindConfig(entry.path.clone()),
-                            Kind::Skies | Kind::Textures => Message::Preview(entry.path.clone()),
-                            Kind::Sounds => Message::Sound(entry.path.clone()),
+                crate::local_resources::LocalRow::Sky(group) => {
+                    list = list.push(self.local_sky_group(&group));
+                    if self.expanded_skies.contains(&group.key) {
+                        for entry in group.faces {
+                            list = list.push(self.local_entry(entry, &root, true));
                         }
-                    }),
-                text(if entry.directory {
-                    String::new()
-                } else {
-                    crate::hub::size(entry.size)
-                })
-                .size(14)
-                .width(88)
-                .align_x(Alignment::End),
-                container(primary).width(76).align_right(Fill)
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center);
-            list = list.push(crate::popup::context(
-                container(line).height(34).center_y(34).width(Fill),
-                panel,
-                Message::EntryMenu(entry.path.clone()),
-            ));
+                    }
+                }
+            }
         }
-        let visible = self
-            .entries
-            .iter()
-            .filter(|entry| workspace::matches(&entry.name, &self.search))
-            .count();
         if visible == 0 {
             let mut empty = column![
                 text(crate::l10n::text(if self.search.trim().is_empty() {
@@ -985,6 +904,214 @@ impl App {
         .height(Fill)
         .into()
     }
+    fn local_entry<'a>(
+        &'a self,
+        entry: &'a Entry,
+        root: &std::path::Path,
+        sky_child: bool,
+    ) -> Element<'a, Message> {
+        let kind = entry.kind;
+        let primary: Element<'_, Message> = if entry.directory {
+            resource_action("打开", Message::Browse(entry.path.clone()), !self.busy)
+        } else {
+            match kind {
+                Kind::Maps => resource_action(
+                    "游玩",
+                    Message::Launch(Some(entry.path.clone())),
+                    !self.locked() && !entry.disabled,
+                ),
+                Kind::Mods => iced::widget::toggler(!entry.disabled)
+                    .size(18)
+                    .style(style::toggle)
+                    .on_toggle_maybe((!self.locked()).then_some({
+                        let entry = entry.clone();
+                        move |_| Message::Toggle(entry.clone())
+                    }))
+                    .into(),
+                Kind::Skies if sky_child => space::horizontal().into(),
+                Kind::Skies | Kind::Textures => {
+                    resource_action("预览", Message::Preview(entry.path.clone()), true)
+                }
+                Kind::Sounds => resource_action(
+                    if self.sound.as_ref() == Some(&entry.path) {
+                        "停止"
+                    } else {
+                        "试听"
+                    },
+                    Message::Sound(entry.path.clone()),
+                    true,
+                ),
+            }
+        };
+        let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
+            let mut menu = column![].spacing(3).width(156);
+            if kind == Kind::Maps && !entry.directory && !entry.disabled {
+                menu = menu.push(menu_action(
+                    "在 Blender 中编辑",
+                    Message::Mapping(mapping::Action::OpenMap(entry.path.clone())),
+                    !self.locked(),
+                ));
+            }
+            if kind == Kind::Mods && !entry.directory {
+                menu = menu.push(menu_action(
+                    "配置",
+                    Message::FindConfig(entry.path.clone()),
+                    true,
+                ));
+            }
+            menu = menu
+                .push(menu_action(
+                    "打开文件夹",
+                    Message::Open(if entry.directory {
+                        entry.path.clone()
+                    } else {
+                        entry.path.parent().unwrap_or(root).to_owned()
+                    }),
+                    true,
+                ))
+                .push(menu_action(
+                    "重命名",
+                    Message::Prompt(PromptKind::Rename(entry.path.clone())),
+                    !self.locked(),
+                ))
+                .push(menu_action(
+                    "移动",
+                    Message::Move(entry.path.clone()),
+                    !self.locked(),
+                ))
+                .push(menu_action(
+                    "删除",
+                    Message::Prompt(PromptKind::Delete(entry.path.clone())),
+                    !self.locked(),
+                ));
+            Some(menu_panel(menu).into())
+        } else {
+            None
+        };
+        let glyph = if entry.directory {
+            crate::icons::Icon::Folder
+        } else {
+            match kind {
+                Kind::Maps => crate::icons::Icon::Map,
+                Kind::Mods => crate::icons::Icon::Puzzle,
+                Kind::Sounds => crate::icons::Icon::Volume,
+                _ => crate::icons::Icon::Image,
+            }
+        };
+        let line = row![
+            crate::icons::view(glyph, 18.0),
+            iced::widget::mouse_area(
+                container(
+                    text(if sky_child {
+                        entry.path.file_name().unwrap_or_default().to_string_lossy()
+                    } else {
+                        std::borrow::Cow::Borrowed(entry.name.as_str())
+                    })
+                    .size(14)
+                )
+                .width(Fill)
+            )
+            .on_double_click(if entry.directory {
+                Message::Browse(entry.path.clone())
+            } else {
+                match kind {
+                    Kind::Maps => Message::Launch(Some(entry.path.clone())),
+                    Kind::Mods => Message::FindConfig(entry.path.clone()),
+                    Kind::Skies if sky_child => Message::CloseMenus,
+                    Kind::Skies | Kind::Textures => Message::Preview(entry.path.clone()),
+                    Kind::Sounds => Message::Sound(entry.path.clone()),
+                }
+            }),
+            text(if entry.directory {
+                String::new()
+            } else {
+                crate::hub::size(entry.size)
+            })
+            .size(14)
+            .width(88)
+            .align_x(Alignment::End),
+            more_button(Message::EntryMenu(entry.path.clone())),
+            container(primary).width(76).align_right(Fill)
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        crate::popup::context(
+            container(line)
+                .padding(iced::Padding::ZERO.left(if sky_child { 26.0 } else { 0.0 }))
+                .height(34)
+                .center_y(34)
+                .width(Fill),
+            panel,
+            Message::EntryMenu(entry.path.clone()),
+        )
+    }
+    fn local_sky_group<'a>(
+        &'a self,
+        group: &crate::local_resources::SkyGroup<'a>,
+    ) -> Element<'a, Message> {
+        let open = self.expanded_skies.contains(&group.key);
+        let panel = if self.entry_menu.as_ref() == Some(&group.key) {
+            Some(
+                menu_panel(
+                    column![
+                        menu_action("预览", Message::Preview(group.preview().path.clone()), true),
+                        menu_action(
+                            "打开文件夹",
+                            Message::Open(group.preview().path.parent().unwrap().to_owned()),
+                            true
+                        ),
+                    ]
+                    .width(156),
+                )
+                .into(),
+            )
+        } else {
+            None
+        };
+        let line = row![
+            button(
+                container(
+                    row![
+                        crate::icons::view(
+                            if open {
+                                crate::icons::Icon::Down
+                            } else {
+                                crate::icons::Icon::Right
+                            },
+                            16.0
+                        ),
+                        text(group.name.clone()).size(14),
+                    ]
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                )
+                .center_y(34)
+            )
+            .style(style::quiet)
+            .padding(0)
+            .width(Fill)
+            .on_press(Message::ExpandSky(group.key.clone())),
+            text(crate::hub::size(group.size()))
+                .size(14)
+                .width(88)
+                .align_x(Alignment::End),
+            more_button(Message::EntryMenu(group.key.clone())),
+            container(resource_action(
+                "预览",
+                Message::Preview(group.preview().path.clone()),
+                true
+            ))
+            .width(76)
+            .align_right(Fill),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        crate::popup::context(
+            container(line).height(34).center_y(34).width(Fill),
+            panel,
+            Message::EntryMenu(group.key.clone()),
+        )
+    }
     fn local_components(&self) -> Element<'_, Message> {
         let Some(instance) = &self.instance else {
             return self.empty();
@@ -1061,18 +1188,11 @@ impl App {
         if !changed {
             return space().width(24).into();
         }
-        iced::widget::tooltip(
-            button(crate::icons::view(crate::icons::Icon::Undo, 15.0))
-                .padding(4)
-                .style(style::quiet)
-                .on_press_maybe((!self.locked()).then_some(Message::RestoreField(i))),
-            container(text("恢复修改前的值").size(14)).padding(8),
-            iced::widget::tooltip::Position::FollowCursor,
-        )
-        .delay(Duration::ZERO)
-        .gap(10)
-        .style(style::menu)
-        .into()
+        button(crate::icons::view(crate::icons::Icon::Undo, 15.0))
+            .padding(4)
+            .style(style::quiet)
+            .on_press_maybe((!self.locked()).then_some(Message::RestoreField(i)))
+            .into()
     }
     fn configuration_label<'a>(
         &'a self,
@@ -1235,7 +1355,7 @@ impl App {
             .into()
         }
     }
-    fn preference_row<'a>(
+    pub(super) fn preference_row<'a>(
         &'a self,
         label: &str,
         description: &str,
@@ -2037,25 +2157,26 @@ impl App {
             content =
                 content.push(self.preference_row("最近游玩", "", text(activity).size(14).into()));
         }
-        content = content.push(
-            container(
-                row![
-                    action("检查更新", Message::CheckUpdate, true),
-                    action(
-                        if self.protocol_ready {
-                            "重新关联一键安装"
-                        } else {
-                            "启用一键安装"
-                        },
-                        Message::RegisterProtocol,
-                        true,
-                    )
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .padding([4, 0]),
-        );
+        content = content
+            .push(separator())
+            .push(self.preference_row(
+                "启动器更新",
+                "",
+                action("检查更新", Message::CheckUpdate, true),
+            ))
+            .push(self.preference_row(
+                "资源站安装链接",
+                "让浏览器中的资源站安装链接打开 Rockoon，软件内安装无需关联。",
+                action(
+                    if self.protocol_ready {
+                        "重新关联"
+                    } else {
+                        "关联到 Rockoon"
+                    },
+                    Message::RegisterProtocol,
+                    true,
+                ),
+            ));
         if let Some(release) = &self.update_release {
             content = content
                 .push(text(format!("Rockoon {}", release.version)).size(16))
@@ -2074,17 +2195,10 @@ impl App {
                 !self.locked(),
             ));
         }
-        #[cfg(not(windows))]
-        {
-            #[cfg(target_os = "macos")]
-            {
-                content = content.push(action("安装 Rosetta 2", Message::Rosetta, !self.locked()));
-            }
-            content = content
-                .push(action("准备 Wine 环境", Message::WineSetup, !self.locked()))
-                .push(action("选择已有 Wine", Message::WineChoose, !self.locked()))
-                .push(action("Wine 设置", Message::WineConfig, !self.locked()));
+        if cfg!(not(windows)) {
+            content = content.push(separator()).push(self.wine_panel(true));
         }
+        content = content.push(separator());
         let hub_origin = jobs::origin();
         let mut links = row![].spacing(4);
         for (label, url) in [

@@ -109,6 +109,18 @@ impl Widget<Message, Theme, Renderer> for Popup<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        // Left-clicking a row's more button must anchor the same menu at that click,
+        // including after this row previously opened a right-click menu elsewhere.
+        if self.context.is_some()
+            && matches!(
+                event,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            )
+            && cursor.is_over(layout.bounds())
+            && cursor.position().is_some_and(|p| viewport.contains(p))
+        {
+            tree.state.downcast_mut::<Pointer>().at = cursor.position();
+        }
         self.trigger.as_widget_mut().update(
             &mut tree.children[0],
             event,

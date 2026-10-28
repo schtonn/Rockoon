@@ -165,11 +165,7 @@ pub fn protocol_registered() -> bool {
     }
     #[cfg(target_os = "macos")]
     {
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.ancestors().nth(2).map(|p| p.join("Info.plist")))
-            .and_then(|p| fs::read_to_string(p).ok())
-            .is_some_and(|s| s.contains("rockoon"))
+        crate::mac_protocol::registered()
     }
     #[cfg(all(not(windows), not(target_os = "macos")))]
     {
@@ -215,7 +211,7 @@ pub fn register_protocol() -> Result<(), String> {
         let status=std::process::Command::new("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister")
             .arg("-f").arg(std::env::current_exe().map_err(error)?.ancestors().nth(3).ok_or("请从 .app 启动")?).status().map_err(error)?;
         if status.success() {
-            Ok(())
+            crate::mac_protocol::associate()
         } else {
             Err("注册协议失败".into())
         }

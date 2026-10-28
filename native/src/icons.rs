@@ -32,6 +32,7 @@ pub enum Icon {
     Trash,
     Edit,
     Close,
+    More,
     Volume,
     Warning,
 }
@@ -271,9 +272,14 @@ impl<M> canvas::Program<M> for Glyph {
                     false,
                 );
             }
-            Icon::Globe | Icon::Search | Icon::Eye | Icon::Refresh => {}
+            Icon::Globe | Icon::Search | Icon::Eye | Icon::Refresh | Icon::More => {}
         }
         match self.0 {
+            Icon::More => {
+                for y in [5.0, 12.0, 19.0] {
+                    frame.fill(&Path::circle(point(12.0, y), 1.6 * s), color);
+                }
+            }
             Icon::Globe => {
                 frame.stroke(&Path::circle(point(12., 12.), 9. * s), stroke);
                 frame.stroke(
