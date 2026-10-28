@@ -81,8 +81,8 @@ static WORDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
         ("关联到 Rockoon", "Link to Rockoon"),
         ("重新关联", "Relink"),
         (
-            "让浏览器中的资源站安装链接打开 Rockoon，软件内安装无需关联。",
-            "Opens browser install links in Rockoon and is optional for installing inside the launcher.",
+            "让浏览器中的资源站安装链接打开 Rockoon。",
+            "Opens browser install links in Rockoon.",
         ),
         ("选择 Ballance", "Choose Ballance"),
         (

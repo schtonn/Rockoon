@@ -55,40 +55,51 @@ impl Skybox {
                 let x =
                     (2.0 * (px as f32 + 0.5) / width as f32 - 1.0) * width as f32 / height as f32;
                 let y = 1.0 - 2.0 * (py as f32 + 0.5) / height as f32;
-                let (y, z) = (y * cp - sp, cp + y * sp);
+                let (y, z) = rotate_pitch(y, sp, cp);
                 let (x, z) = (x * cy + z * sy, z * cy - x * sy);
-                let (ax, ay, az) = (x.abs(), y.abs(), z.abs());
-                let (side, u, v) = if ay > ax && ay > az {
-                    if y > 0.0 {
-                        ("Up", 0.0, 0.0)
-                    } else {
-                        ("Down", x / ay, z / ay)
-                    }
-                } else if ax > az {
-                    if x > 0.0 {
-                        ("Right", -z / ax, -y / ax)
-                    } else {
-                        ("Left", z / ax, -y / ax)
-                    }
-                } else if z > 0.0 {
-                    ("Front", x / az, -y / az)
-                } else {
-                    ("Back", -x / az, -y / az)
-                };
-                if let Some(face) = self.faces.get(side) {
-                    let fx = ((u + 1.0) * 0.5 * face.width() as f32)
-                        .clamp(0.0, face.width().saturating_sub(1) as f32)
-                        as u32;
-                    let fy = ((v + 1.0) * 0.5 * face.height() as f32)
-                        .clamp(0.0, face.height().saturating_sub(1) as f32)
-                        as u32;
-                    pixels.extend_from_slice(&face.get_pixel(fx, fy).0);
-                } else {
-                    pixels.extend_from_slice(&[29, 30, 31, 255]);
-                }
+                pixels.extend_from_slice(&self.sample(x, y, z));
             }
         }
         iced::widget::image::Handle::from_rgba(width, height, pixels)
+    }
+    fn sample(&self, x: f32, y: f32, z: f32) -> [u8; 4] {
+        let (side, u, v) = face_coordinates(x, y, z);
+        if let Some(face) = self.faces.get(side) {
+            let fx = ((u + 1.0) * 0.5 * face.width() as f32)
+                .clamp(0.0, face.width().saturating_sub(1) as f32) as u32;
+            let fy = ((v + 1.0) * 0.5 * face.height() as f32)
+                .clamp(0.0, face.height().saturating_sub(1) as f32) as u32;
+            face.get_pixel(fx, fy).0
+        } else {
+            [29, 30, 31, 255]
+        }
+    }
+}
+
+// Positive pitch looks up, matching direct manipulation of the sky image.
+fn rotate_pitch(y: f32, sp: f32, cp: f32) -> (f32, f32) {
+    (y * cp + sp, cp - y * sp)
+}
+fn face_coordinates(x: f32, y: f32, z: f32) -> (&'static str, f32, f32) {
+    let (ax, ay, az) = (x.abs(), y.abs(), z.abs());
+    if ay > ax && ay > az {
+        if y > 0.0 {
+            ("Up", 0.0, 0.0)
+        }
+        // The original Down texture's top edge meets Front's bottom edge.
+        else {
+            ("Down", x / ay, -z / ay)
+        }
+    } else if ax > az {
+        if x > 0.0 {
+            ("Right", -z / ax, -y / ax)
+        } else {
+            ("Left", z / ax, -y / ax)
+        }
+    } else if z > 0.0 {
+        ("Front", x / az, -y / az)
+    } else {
+        ("Back", -x / az, -y / az)
     }
 }
 
@@ -126,6 +137,53 @@ impl RenderQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn positive_pitch_looks_up_and_negative_pitch_looks_down() {
+        for pitch in [15.0_f32, 45.0, 80.0] {
+            let (sp, cp) = pitch.to_radians().sin_cos();
+            assert!(rotate_pitch(0.0, sp, cp).0 > 0.0);
+            assert!(rotate_pitch(0.0, -sp, cp).0 < 0.0);
+        }
+    }
+    #[test]
+    fn bottom_texture_joins_all_four_side_faces_without_flips() {
+        // A continuous world-space color field, baked onto the five cube faces.
+        let mut faces = BTreeMap::new();
+        for side in ["Front", "Back", "Left", "Right", "Down"] {
+            let face = bitmap::RgbaImage::from_fn(65, 65, |px, py| {
+                let u = px as f32 / 32.0 - 1.0;
+                let v = py as f32 / 32.0 - 1.0;
+                let (x, y, z) = match side {
+                    "Front" => (u, -v, 1.0),
+                    "Back" => (-u, -v, -1.0),
+                    "Left" => (-1.0, -v, u),
+                    "Right" => (1.0, -v, -u),
+                    "Down" => (u, -1.0, -v),
+                    _ => unreachable!(),
+                };
+                bitmap::Rgba([
+                    ((x + 1.0) * 100.0) as u8,
+                    ((y + 1.0) * 100.0) as u8,
+                    ((z + 1.0) * 100.0) as u8,
+                    255,
+                ])
+            });
+            faces.insert(side.into(), face);
+        }
+        let sky = Skybox { faces };
+        for offset in [-0.8, -0.3, 0.0, 0.4, 0.9] {
+            for (x, z) in [(offset, 1.0), (offset, -1.0), (1.0, offset), (-1.0, offset)] {
+                let side = sky.sample(x, -0.999, z);
+                let bottom = sky.sample(x, -1.001, z);
+                for channel in 0..3 {
+                    assert!(
+                        side[channel].abs_diff(bottom[channel]) <= 4,
+                        "seam at {x}, {z}: {side:?} vs {bottom:?}"
+                    );
+                }
+            }
+        }
+    }
     #[test]
     fn dragging_coalesces_to_latest_angle_and_preserves_final_full_resolution() {
         let mut queue = RenderQueue::default();

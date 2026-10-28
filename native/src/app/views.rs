@@ -2170,7 +2170,7 @@ impl App {
             ))
             .push(self.preference_row(
                 "资源站安装链接",
-                "让浏览器中的资源站安装链接打开 Rockoon，软件内安装无需关联。",
+                "让浏览器中的资源站安装链接打开 Rockoon。",
                 action(
                     if self.protocol_ready {
                         "重新关联"
