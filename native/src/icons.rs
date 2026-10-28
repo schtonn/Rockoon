@@ -19,6 +19,7 @@ pub enum Icon {
     Import,
     Plus,
     Refresh,
+    Undo,
     Play,
     Eye,
     Check,
@@ -255,6 +256,20 @@ impl<M> canvas::Program<M> for Glyph {
                 line(&[(12., 3.), (22., 21.), (2., 21.)], true);
                 line(&[(12., 9.), (12., 14.)], false);
                 line(&[(12., 17.), (12., 17.4)], false);
+            }
+            Icon::Undo => {
+                line(&[(8., 4.), (3., 9.), (8., 14.)], false);
+                line(
+                    &[
+                        (3., 9.),
+                        (14., 9.),
+                        (18., 11.),
+                        (20., 15.),
+                        (18., 19.),
+                        (14., 20.),
+                    ],
+                    false,
+                );
             }
             Icon::Globe | Icon::Search | Icon::Eye | Icon::Refresh => {}
         }

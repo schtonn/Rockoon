@@ -7,6 +7,19 @@ use iced::advanced::{
 };
 use iced::{Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector};
 
+/// A menu anchored beneath its trigger without taking space in the content flow.
+pub fn menu<'a>(
+    trigger: impl Into<Element<'a, Message>>,
+    panel: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    Element::new(Popup {
+        trigger: trigger.into(),
+        open: panel.is_some(),
+        panel: panel.unwrap_or_else(|| iced::widget::space().into()),
+        right: false,
+        context: None,
+    })
+}
 /// File-manager style menu at the pointer; nested contexts consume the click first.
 pub fn context<'a>(
     content: impl Into<Element<'a, Message>>,

@@ -32,6 +32,24 @@ pub struct Document {
     pub dirty: bool,
     parts: Vec<Document>,
 }
+#[derive(Clone, Debug)]
+pub struct SaveError {
+    pub message: String,
+    pub conflict: bool,
+}
+impl From<String> for SaveError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            conflict: false,
+        }
+    }
+}
+impl From<&str> for SaveError {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
 pub fn options(root: &Path) -> Result<Value, String> {
     let mut opts = rockoon_core::options::BallanceOptions::new();
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -248,6 +266,15 @@ fn ini_boolean(key: &str, value: &str) -> bool {
             )
 }
 impl Field {
+    pub fn key_encoding(&self) -> Option<crate::keys::Encoding> {
+        if self.key.starts_with("/key") {
+            Some(crate::keys::Encoding::Ballance)
+        } else if self.prefix.split_whitespace().next() == Some("K") {
+            Some(crate::keys::Encoding::ScanCode)
+        } else {
+            None
+        }
+    }
     pub fn enabled(&self) -> bool {
         matches!(
             self.value.to_ascii_lowercase().as_str(),
@@ -312,7 +339,7 @@ impl Document {
                 "FontRanges" | "SecondaryFontRanges" => {
                     Some("显示中文请选择 Chinese 或 ChineseFull。")
                 }
-                "LevelNumber" => Some("设为 0 随机借用第 2–11 关，否则使用指定关卡。"),
+                "LevelNumber" => None,
                 "MaxDepth" => Some("限制地图菜单可以进入的文件夹层数。"),
                 "Overclock" => Some("跳过开局和复活时等待球落下的过程。"),
                 "LanternAlphaTest" => Some("改变灯笼的透明绘制方式来提高帧率。"),
@@ -343,15 +370,6 @@ impl Document {
             .replace('；', "，")
             .replace(';', ",");
         (!text.is_empty()).then_some(text)
-    }
-}
-pub fn source_help(name: &str) -> &'static str {
-    match name {
-        "游戏设置" => "包含原版游戏设置和 NewPlayer 的窗口与兼容参数。",
-        "BML.cfg" => "调整加载器的菜单、游戏内信息和帧率等功能。",
-        "CameraUtilities.cfg" => "配置相机工具的移动、旋转和重置功能。",
-        "DebugUtilities.cfg" => "配置调试工具的重置球、切换球种等功能。",
-        _ => "这是所选模组的独立配置。",
     }
 }
 pub fn load(root: &Path, source: Source) -> Result<Document, String> {
@@ -573,12 +591,36 @@ impl Document {
         }
         Ok(value)
     }
+    #[cfg(test)]
     pub fn save(&self, root: &Path) -> Result<(), String> {
+        self.persist(root, false).map(|_| ()).map_err(|e| e.message)
+    }
+    pub fn persist(&self, root: &Path, overwrite: bool) -> Result<Document, SaveError> {
         workspace::idle(root)?;
-        workspace::replace(root, &self.changes(root)?)
+        workspace::replace(root, &self.changes(root, overwrite)?)?;
+        load(root, self.source.clone()).map_err(Into::into)
+    }
+    /// Carry edits made while a background write was running onto its new baseline.
+    pub fn rebase(&mut self, saved: &Document, current: &Document) {
+        for field in &mut self.fields {
+            let before = saved
+                .fields
+                .iter()
+                .find(|f| f.key == field.key && f.group == field.group);
+            let after = current
+                .fields
+                .iter()
+                .find(|f| f.key == field.key && f.group == field.group);
+            if let (Some(before), Some(after)) = (before, after)
+                && before.value != after.value
+            {
+                field.value = after.value.clone();
+                self.dirty = true;
+            }
+        }
     }
     /// Validate and encode every source before the single write transaction begins.
-    fn changes(&self, root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+    fn changes(&self, root: &Path, overwrite: bool) -> Result<Vec<(PathBuf, Vec<u8>)>, SaveError> {
         match &self.source {
             Source::Game => {
                 let mut changes = Vec::new();
@@ -596,7 +638,7 @@ impl Document {
                     {
                         let mut edited = original.clone();
                         edited.fields = fields.to_vec();
-                        changes.extend(edited.changes(root)?);
+                        changes.extend(edited.changes(root, overwrite)?);
                     }
                     offset = end;
                 }
@@ -613,11 +655,14 @@ impl Document {
                         .zip(after.and_then(Value::as_f64))
                         .is_some_and(|(a, b)| (a - b).abs() < 0.000001);
                     if before != after && !same_number {
-                        if current.pointer(&field.key) != before {
-                            return Err(format!(
-                                "{} 已由其他操作修改，请重新读取配置",
-                                field.label
-                            ));
+                        if !overwrite
+                            && current.pointer(&field.key) != before
+                            && current.pointer(&field.key) != after
+                        {
+                            return Err(SaveError {
+                                message: format!("{} 已被其他程序修改", field.label),
+                                conflict: true,
+                            });
                         }
                         if let (Some(dest), Some(value)) = (current.pointer_mut(&field.key), after)
                         {
@@ -631,21 +676,25 @@ impl Document {
                 )])
             }
             Source::File(path) => {
-                if fs::read_to_string(path)
-                    .map_err(error)?
-                    .lines()
-                    .collect::<Vec<_>>()
-                    != self.lines.iter().map(String::as_str).collect::<Vec<_>>()
+                if !overwrite
+                    && fs::read_to_string(path)
+                        .map_err(error)?
+                        .lines()
+                        .collect::<Vec<_>>()
+                        != self.lines.iter().map(String::as_str).collect::<Vec<_>>()
                 {
-                    return Err("配置已由其他操作修改，请重新读取后编辑".into());
+                    return Err(SaveError {
+                        message: "这个配置文件已被其他程序修改".into(),
+                        conflict: true,
+                    });
                 }
                 let mut lines = self.lines.clone();
                 for f in &self.fields {
                     if f.value.contains(['\n', '\r']) {
                         return Err("配置值不能包含换行".into());
                     }
-                    if f.number && f.value.parse::<f64>().is_err() {
-                        return Err(format!("{} 需要数字", f.label));
+                    if f.number && !f.value.parse::<f64>().is_ok_and(f64::is_finite) {
+                        return Err(format!("{} 需要数字", f.label).into());
                     }
                     if let Some(i) = f.line {
                         lines[i] = format!("{}{}", f.prefix, f.value);
@@ -658,6 +707,28 @@ impl Document {
             }
         }
     }
+}
+/// The loader setting is also used by launcher-initiated custom map sessions.
+pub fn map_level(root: &Path, legacy: u8) -> Result<u8, String> {
+    for name in ["ModLoader/Configs/BML.cfg", "ModLoader/Config/BML.cfg"] {
+        let path = root.join(name);
+        if path.is_file() {
+            let doc = load(root, Source::File(path))?;
+            if let Some(field) = doc
+                .fields
+                .iter()
+                .find(|f| f.group == "CustomMap" && f.key == "LevelNumber")
+            {
+                return field
+                    .value
+                    .parse::<u8>()
+                    .ok()
+                    .filter(|v| *v <= 13)
+                    .ok_or_else(|| "自制地图承载关卡需要选择自动或第 1–13 关".into());
+            }
+        }
+    }
+    Ok(legacy.min(13))
 }
 pub fn files(root: &Path) -> Result<Vec<PathBuf>, String> {
     let mut result = Vec::new();
@@ -724,6 +795,103 @@ pub fn ini_text(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn config_conflicts_require_explicit_overwrite_and_invalid_values_never_write() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Test.cfg");
+        fs::write(&path, "General {\n I Limit 60\n}\n").unwrap();
+        let mut doc = load(root.path(), Source::File(path.clone())).unwrap();
+        doc.fields[0].value = "120".into();
+        doc.dirty = true;
+        let external = "General {\n I Limit 90\n}\n";
+        fs::write(&path, external).unwrap();
+        assert!(doc.persist(root.path(), false).unwrap_err().conflict);
+        assert_eq!(fs::read_to_string(&path).unwrap(), external);
+        let mut saved = doc.persist(root.path(), true).unwrap();
+        assert_eq!(saved.fields[0].value, "120");
+        assert!(!saved.dirty);
+        let before = fs::read(&path).unwrap();
+        for invalid in ["-", "NaN", "inf"] {
+            saved.fields[0].value = invalid.into();
+            assert!(!saved.persist(root.path(), false).unwrap_err().conflict);
+            assert_eq!(fs::read(&path).unwrap(), before);
+        }
+    }
+    #[test]
+    fn edits_made_during_a_save_survive_rebasing_including_undo() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Test.cfg");
+        fs::write(&path, "General {\n I First 1\n I Second 2\n}\n").unwrap();
+        let initial = load(root.path(), Source::File(path)).unwrap();
+        let mut saving = initial.clone();
+        saving.fields[0].value = "10".into();
+        saving.dirty = true;
+        let fresh = saving.persist(root.path(), false).unwrap();
+        let mut latest = saving.clone();
+        latest.fields[0].value = "1".into();
+        latest.fields[1].value = "20".into();
+        let mut rebased = fresh;
+        rebased.rebase(&saving, &latest);
+        assert!(rebased.dirty);
+        assert_eq!(rebased.fields[0].value, "1");
+        assert_eq!(rebased.fields[1].value, "20");
+        let saved = rebased.persist(root.path(), false).unwrap();
+        assert_eq!(saved.fields[0].value, "1");
+        assert_eq!(saved.fields[1].value, "20");
+    }
+    #[test]
+    fn forced_database_edit_preserves_unedited_external_values() {
+        let root = game_fixture();
+        let mut doc = load(root.path(), Source::Options).unwrap();
+        edit(&mut doc, "/volume", "0.25");
+        let mut external = options(root.path()).unwrap();
+        external["volume"] = json!(0.75);
+        external["lastPlayer"] = json!("External player");
+        save_options(root.path(), &external).unwrap();
+        assert!(doc.persist(root.path(), false).unwrap_err().conflict);
+        assert!((options(root.path()).unwrap()["volume"].as_f64().unwrap() - 0.75).abs() < 0.001);
+        doc.persist(root.path(), true).unwrap();
+        let actual = options(root.path()).unwrap();
+        assert!((actual["volume"].as_f64().unwrap() - 0.25).abs() < 0.001);
+        assert_eq!(actual["lastPlayer"], "External player");
+        assert_eq!(actual["highscores"], external["highscores"]);
+    }
+    #[test]
+    fn launcher_uses_the_same_map_slot_as_the_loader() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(map_level(root.path(), 8).unwrap(), 8);
+        fs::create_dir_all(root.path().join("ModLoader/Configs")).unwrap();
+        let path = root.path().join("ModLoader/Configs/BML.cfg");
+        fs::write(&path, "CustomMap {\n I LevelNumber 3\n}\n").unwrap();
+        assert_eq!(map_level(root.path(), 8).unwrap(), 3);
+        fs::write(&path, "CustomMap {\n I LevelNumber 0\n}\n").unwrap();
+        assert_eq!(map_level(root.path(), 8).unwrap(), 0);
+        fs::write(&path, "CustomMap {\n I LevelNumber 14\n}\n").unwrap();
+        assert!(map_level(root.path(), 8).is_err());
+    }
+    #[test]
+    fn typed_mod_keys_are_recordable_but_other_numeric_fields_are_not() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Test.cfg");
+        fs::write(&path, "General {\n K Hotkey 57\n I FrameRate 60\n}\n").unwrap();
+        let mut doc = load(root.path(), Source::File(path.clone())).unwrap();
+        assert_eq!(
+            doc.fields[0].key_encoding(),
+            Some(crate::keys::Encoding::ScanCode)
+        );
+        assert_eq!(doc.fields[1].key_encoding(), None);
+        doc.fields[0].value = crate::keys::encode(
+            crate::keys::Encoding::ScanCode,
+            iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::ArrowUp),
+        )
+        .unwrap()
+        .to_string();
+        doc.dirty = true;
+        doc.save(root.path()).unwrap();
+        let written = fs::read_to_string(path).unwrap();
+        assert!(written.contains("K Hotkey 200"));
+        assert!(written.contains("I FrameRate 60"));
+    }
     #[test]
     fn builtin_cfg_labels_are_chinese_but_saved_keys_stay_original() {
         let root = tempfile::tempdir().unwrap();

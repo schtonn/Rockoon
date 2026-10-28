@@ -71,6 +71,13 @@ fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Messa
 fn separator<'a>() -> Element<'a, Message> {
     container(rule::horizontal(1)).padding([8, 0]).into()
 }
+fn resource_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
+    button(text(crate::l10n::text(label)).size(14))
+        .padding([3, 8])
+        .style(style::secondary)
+        .on_press_maybe(enabled.then_some(message))
+        .into()
+}
 fn menu_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
     let content: Element<'a, Message> = if let Some(icon) = crate::icons::for_label(label) {
         crate::icons::label(icon, crate::l10n::text(label))
@@ -104,6 +111,9 @@ fn menu_panel<'a>(
 }
 impl App {
     pub fn view(&self) -> Element<'_, Message> {
+        crate::keys::recorder(self.view_content(), self.key_capture.is_some())
+    }
+    fn view_content(&self) -> Element<'_, Message> {
         let colors = style::colors(&self.theme());
         let mut nav = column![].spacing(6);
         for page in [Page::Home, Page::Maps, Page::Config, Page::Tasks] {
@@ -213,6 +223,30 @@ impl App {
                 ]
                 .spacing(8),
             );
+            return stack![
+                base,
+                opaque(
+                    container(container(body).padding(24).style(style::menu))
+                        .center_x(Fill)
+                        .center_y(Fill)
+                        .style(style::shade)
+                )
+            ]
+            .into();
+        }
+        if let Some(conflict) = &self.save_conflict {
+            let body = column![
+                text("配置发生冲突").size(19),
+                text(format!("{conflict}，要用当前修改覆盖吗？")).size(14),
+                row![
+                    space::horizontal(),
+                    action("取消", Message::CancelSaveConflict, self.saving.is_none()),
+                    action("覆盖", Message::OverwriteSave, self.saving.is_none()),
+                ]
+                .spacing(12)
+            ]
+            .spacing(18)
+            .width(430);
             return stack![
                 base,
                 opaque(
@@ -514,15 +548,35 @@ impl App {
         } else {
             style::quiet
         })
-        .on_press_maybe((!self.locked() && !self.picking_folder).then_some(Message::PickFolder));
-        let path = button(text(path).size(14))
-            .padding([7, 0])
-            .style(if self.page == Page::Home {
-                style::sky_button
-            } else {
-                style::quiet
-            })
-            .on_press_maybe(self.root().map(Message::Open));
+        .on_press_maybe((!self.locked() && !self.picking_folder).then_some(Message::FolderMenu));
+        let panel = self.folder_menu.then(|| {
+            container(
+                column![
+                    button(text("打开目录").size(14))
+                        .padding([8, 12])
+                        .width(Fill)
+                        .style(style::quiet)
+                        .on_press_maybe(self.root().map(Message::Open)),
+                    button(text("更改目录").size(14))
+                        .padding([8, 12])
+                        .width(Fill)
+                        .style(style::quiet)
+                        .on_press(Message::PickFolder),
+                ]
+                .spacing(2),
+            )
+            .padding(4)
+            .width(150)
+            .style(style::menu)
+            .into()
+        });
+        let trigger = crate::popup::menu(trigger, panel);
+        let path = container(text(path).size(14).color(if self.page == Page::Home {
+            iced::Color::WHITE
+        } else {
+            style::colors(&self.theme()).text
+        }))
+        .padding([7, 0]);
         let folder_row = row![trigger, path].spacing(8).align_y(Alignment::Center);
         let actions = column![folder_row].spacing(4).align_x(Alignment::Start);
         let mut header = row![].align_y(Alignment::Center);
@@ -678,41 +732,122 @@ impl App {
         if self.sound.is_some() {
             crumbs = crumbs.push(action("停止试听", Message::StopSound, true));
         }
-        let visible_entries: Vec<_> = self
+        let mut list = column![].spacing(0);
+        for entry in self
             .entries
             .iter()
             .filter(|e| workspace::matches(&e.name, &self.search))
-            .collect();
-        let page_entries: Vec<_> = visible_entries
-            .iter()
-            .skip(self.local_page * crate::hub::PAGE_SIZE)
-            .take(crate::hub::PAGE_SIZE)
-            .copied()
-            .collect();
-        let mut list = column![].spacing(0);
-        if !page_entries.is_empty() {
-            list = list.push(
-                iced::widget::responsive(move |size| {
-                    let columns = if size.width >= 760.0 { 3 } else { 2 };
-                    let mut grid = column![].spacing(16);
-                    for chunk in page_entries.chunks(columns) {
-                        let mut line = row![].spacing(16);
-                        for entry in chunk {
-                            line = line.push(
-                                container(self.local_card(entry))
-                                    .width(iced::Length::FillPortion(1)),
-                            );
-                        }
-                        for _ in chunk.len()..columns {
-                            line =
-                                line.push(space::horizontal().width(iced::Length::FillPortion(1)));
-                        }
-                        grid = grid.push(line);
+        {
+            let kind = entry.kind;
+            let primary: Element<'_, Message> = if entry.directory {
+                resource_action("打开", Message::Browse(entry.path.clone()), !self.busy)
+            } else {
+                match kind {
+                    Kind::Maps => resource_action(
+                        "游玩",
+                        Message::Launch(Some(entry.path.clone())),
+                        !self.locked() && !entry.disabled,
+                    ),
+                    Kind::Mods => iced::widget::toggler(!entry.disabled)
+                        .size(18)
+                        .style(style::toggle)
+                        .on_toggle_maybe((!self.locked()).then_some({
+                            let entry = entry.clone();
+                            move |_| Message::Toggle(entry.clone())
+                        }))
+                        .into(),
+                    Kind::Skies | Kind::Textures => {
+                        resource_action("预览", Message::Preview(entry.path.clone()), true)
                     }
-                    grid.into()
+                    Kind::Sounds => resource_action(
+                        if self.sound.as_ref() == Some(&entry.path) {
+                            "停止"
+                        } else {
+                            "试听"
+                        },
+                        Message::Sound(entry.path.clone()),
+                        true,
+                    ),
+                }
+            };
+            let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
+                let mut menu = column![].spacing(3).width(156);
+                if kind == Kind::Mods && !entry.directory {
+                    menu = menu.push(menu_action(
+                        "配置",
+                        Message::FindConfig(entry.path.clone()),
+                        true,
+                    ));
+                }
+                menu = menu
+                    .push(menu_action(
+                        "打开文件夹",
+                        Message::Open(if entry.directory {
+                            entry.path.clone()
+                        } else {
+                            entry.path.parent().unwrap_or(&root).to_owned()
+                        }),
+                        true,
+                    ))
+                    .push(menu_action(
+                        "重命名",
+                        Message::Prompt(PromptKind::Rename(entry.path.clone())),
+                        !self.locked(),
+                    ))
+                    .push(menu_action(
+                        "移动",
+                        Message::Move(entry.path.clone()),
+                        !self.locked(),
+                    ))
+                    .push(menu_action(
+                        "删除",
+                        Message::Prompt(PromptKind::Delete(entry.path.clone())),
+                        !self.locked(),
+                    ));
+                Some(menu_panel(menu).into())
+            } else {
+                None
+            };
+            let glyph = if entry.directory {
+                crate::icons::Icon::Folder
+            } else {
+                match kind {
+                    Kind::Maps => crate::icons::Icon::Map,
+                    Kind::Mods => crate::icons::Icon::Puzzle,
+                    Kind::Sounds => crate::icons::Icon::Volume,
+                    _ => crate::icons::Icon::Image,
+                }
+            };
+            let line = row![
+                crate::icons::view(glyph, 18.0),
+                iced::widget::mouse_area(container(text(&entry.name).size(14)).width(Fill))
+                    .on_double_click(if entry.directory {
+                        Message::Browse(entry.path.clone())
+                    } else {
+                        match kind {
+                            Kind::Maps => Message::Launch(Some(entry.path.clone())),
+                            Kind::Mods => Message::FindConfig(entry.path.clone()),
+                            Kind::Skies | Kind::Textures => Message::Preview(entry.path.clone()),
+                            Kind::Sounds => Message::Sound(entry.path.clone()),
+                        }
+                    }),
+                text(if entry.directory {
+                    String::new()
+                } else {
+                    crate::hub::size(entry.size)
                 })
-                .height(iced::Shrink),
-            );
+                .size(14)
+                .width(88)
+                .align_x(Alignment::End),
+                container(primary).width(76).align_right(Fill)
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
+            list = list.push(crate::popup::context(
+                container(line).height(34).center_y(34).width(Fill),
+                panel,
+                Message::EntryMenu(entry.path.clone()),
+            ));
         }
         let visible = self
             .entries
@@ -786,7 +921,6 @@ impl App {
         } else {
             None
         };
-        let pages = visible.div_ceil(crate::hub::PAGE_SIZE).max(1);
         body.push(crate::popup::context(
             scrollable(
                 container(list)
@@ -797,191 +931,8 @@ impl App {
             panel,
             Message::EntryMenu(self.directory.clone()),
         ))
-        .push(
-            row![
-                text(format!("{visible} 项资源")).size(14),
-                space::horizontal(),
-                action(
-                    "上一页",
-                    Message::LocalPage(self.local_page.saturating_sub(1)),
-                    self.local_page > 0
-                ),
-                text(format!("{} / {pages}", self.local_page + 1)).size(14),
-                action(
-                    "下一页",
-                    Message::LocalPage(self.local_page + 1),
-                    self.local_page + 1 < pages
-                )
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center),
-        )
         .height(Fill)
         .into()
-    }
-    fn local_card<'a>(&'a self, entry: &'a Entry) -> Element<'a, Message> {
-        let root = self.root().unwrap_or_default();
-        let kind = entry.kind;
-        let primary = if entry.directory {
-            action("打开", Message::Browse(entry.path.clone()), !self.busy)
-        } else {
-            match kind {
-                Kind::Maps => action(
-                    "游玩",
-                    Message::Launch(Some(entry.path.clone())),
-                    !self.locked() && !entry.disabled,
-                ),
-                Kind::Mods => action(
-                    if entry.disabled { "启用" } else { "停用" },
-                    Message::Toggle(entry.clone()),
-                    !self.locked(),
-                ),
-                Kind::Skies | Kind::Textures => {
-                    action("预览", Message::Preview(entry.path.clone()), true)
-                }
-                Kind::Sounds => action(
-                    if self.sound.as_ref() == Some(&entry.path) {
-                        "停止"
-                    } else {
-                        "试听"
-                    },
-                    Message::Sound(entry.path.clone()),
-                    true,
-                ),
-            }
-        };
-        let panel = if self.entry_menu.as_ref() == Some(&entry.path) {
-            let mut menu = column![].spacing(3).width(156);
-            if kind == Kind::Mods && !entry.directory {
-                menu = menu.push(menu_action(
-                    "配置",
-                    Message::FindConfig(entry.path.clone()),
-                    true,
-                ));
-            }
-            menu = menu
-                .push(menu_action(
-                    "打开文件夹",
-                    Message::Open(if entry.directory {
-                        entry.path.clone()
-                    } else {
-                        entry.path.parent().unwrap_or(&root).to_owned()
-                    }),
-                    true,
-                ))
-                .push(menu_action(
-                    "重命名",
-                    Message::Prompt(PromptKind::Rename(entry.path.clone())),
-                    !self.locked(),
-                ))
-                .push(menu_action(
-                    "移动",
-                    Message::Move(entry.path.clone()),
-                    !self.locked(),
-                ))
-                .push(menu_action(
-                    "删除",
-                    Message::Prompt(PromptKind::Delete(entry.path.clone())),
-                    !self.locked(),
-                ));
-            Some(menu_panel(menu).into())
-        } else {
-            None
-        };
-        let message = if entry.directory {
-            Message::Browse(entry.path.clone())
-        } else {
-            match kind {
-                Kind::Maps => Message::Launch(Some(entry.path.clone())),
-                Kind::Mods => Message::Toggle(entry.clone()),
-                Kind::Sounds => Message::Sound(entry.path.clone()),
-                _ => Message::Preview(entry.path.clone()),
-            }
-        };
-        let enabled = if entry.directory {
-            !self.busy
-        } else if matches!(kind, Kind::Maps | Kind::Mods) {
-            !self.locked() && (kind == Kind::Mods || !entry.disabled)
-        } else {
-            true
-        };
-        let cover: Element<'a, Message> =
-            if let Some(Some(preview)) = self.local_previews.get(&entry.path) {
-                button(crate::cover::view(
-                    preview.clone(),
-                    128.0,
-                    iced::ContentFit::Cover,
-                ))
-                .padding(0)
-                .style(style::quiet)
-                .on_press_maybe(enabled.then_some(message))
-                .into()
-            } else {
-                container(
-                    column![
-                        crate::icons::view(
-                            if entry.directory {
-                                crate::icons::Icon::Folder
-                            } else {
-                                match kind {
-                                    Kind::Maps => crate::icons::Icon::Map,
-                                    Kind::Mods => crate::icons::Icon::Puzzle,
-                                    Kind::Sounds => crate::icons::Icon::Volume,
-                                    _ => crate::icons::Icon::Image,
-                                }
-                            },
-                            24.0
-                        ),
-                        primary
-                    ]
-                    .spacing(10)
-                    .align_x(Alignment::Center),
-                )
-                .center_x(Fill)
-                .center_y(128)
-                .style(style::catalog_placeholder)
-                .into()
-            };
-        let name = if entry.name.chars().count() > 36 {
-            format!("{}…", entry.name.chars().take(35).collect::<String>())
-        } else {
-            entry.name.clone()
-        };
-        let metadata = row![
-            text(if entry.directory {
-                "文件夹".into()
-            } else {
-                format!(
-                    "{}{}",
-                    entry.kind,
-                    if entry.disabled {
-                        "（已停用）"
-                    } else {
-                        ""
-                    }
-                )
-            })
-            .size(13)
-            .width(Fill),
-            text(if entry.directory {
-                String::new()
-            } else {
-                crate::hub::size(entry.size)
-            })
-            .size(13)
-        ]
-        .spacing(8);
-        let card = container(
-            column![
-                cover,
-                container(column![text(name).size(16).height(42), metadata].spacing(10))
-                    .padding(12)
-            ]
-            .spacing(0),
-        )
-        .width(Fill)
-        .style(style::catalog_card);
-        crate::popup::context(card, panel, Message::EntryMenu(entry.path.clone()))
     }
     fn local_components(&self) -> Element<'_, Message> {
         let Some(instance) = &self.instance else {
@@ -1006,8 +957,7 @@ impl App {
             );
         }
         components = components.push(action("配置游戏", Message::Page(Page::Install), true));
-        let mut list =
-            column![container(components).padding(16).style(style::catalog_card)].spacing(16);
+        let mut list = column![components, separator()].spacing(0);
         for patch in self
             .hub
             .receipts
@@ -1024,26 +974,22 @@ impl App {
                 .clone()
                 .or_else(|| patch.version.map(|v| format!("版本 #{v}")))
                 .unwrap_or_else(|| "已安装".into());
-            let card = container(
-                column![
-                    row![text(name).size(16).width(Fill), text(version).size(13)]
-                        .align_y(Alignment::Center),
-                    row![
-                        text(format!("{} 个文件", patch.files.len()))
-                            .size(13)
-                            .width(Fill),
-                        action(
-                            "详情",
-                            Message::Hub(super::catalog::Action::Open(patch.id)),
-                            true
-                        )
-                    ]
+            let line = container(
+                row![
+                    text(name).size(14).width(Fill),
+                    text(version).size(14),
+                    resource_action(
+                        "详情",
+                        Message::Hub(super::catalog::Action::Open(patch.id)),
+                        true
+                    )
                 ]
-                .spacing(12),
+                .spacing(12)
+                .align_y(Alignment::Center),
             )
-            .padding(16)
-            .style(style::catalog_card);
-            list = list.push(card);
+            .height(34)
+            .center_y(34);
+            list = list.push(line);
         }
         scrollable(list).height(Fill).into()
     }
@@ -1056,14 +1002,45 @@ impl App {
             .text_size(14)
             .into()
     }
-    fn configuration_label<'a>(&'a self, field: &'a config::Field) -> Element<'a, Message> {
-        container(crate::hint::label(
-            crate::l10n::text(&field.label),
-            self.document
-                .as_ref()
-                .and_then(|d| d.field_help(field))
-                .unwrap_or_default(),
-        ))
+    fn restore_field(&self, i: usize, field: &config::Field) -> Element<'_, Message> {
+        let changed = self
+            .undo_values
+            .get(&(field.key.clone(), field.group.clone()))
+            .is_some_and(|value| *value != field.value);
+        if !changed {
+            return space().width(24).into();
+        }
+        iced::widget::tooltip(
+            button(crate::icons::view(crate::icons::Icon::Undo, 15.0))
+                .padding(4)
+                .style(style::quiet)
+                .on_press_maybe((!self.locked()).then_some(Message::RestoreField(i))),
+            container(text("恢复修改前的值").size(14)).padding(8),
+            iced::widget::tooltip::Position::FollowCursor,
+        )
+        .delay(Duration::ZERO)
+        .gap(10)
+        .style(style::menu)
+        .into()
+    }
+    fn configuration_label<'a>(
+        &'a self,
+        i: usize,
+        field: &'a config::Field,
+    ) -> Element<'a, Message> {
+        row![
+            container(crate::hint::label(
+                crate::l10n::text(&field.label),
+                self.document
+                    .as_ref()
+                    .and_then(|d| d.field_help(field))
+                    .unwrap_or_default(),
+            ))
+            .width(Fill),
+            self.restore_field(i, field)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
         .width(Fill)
         .into()
     }
@@ -1072,6 +1049,70 @@ impl App {
         i: usize,
         field: &'a config::Field,
     ) -> Element<'a, Message> {
+        if let Some(encoding) = field.key_encoding() {
+            let capture = self.key_capture.as_ref().filter(|c| c.field == i);
+            let caption = match capture {
+                Some(c) if c.unsupported => "不支持此键，请重试".into(),
+                Some(_) => "按下按键，Esc 取消".into(),
+                None => crate::keys::name(encoding, &field.value),
+            };
+            return row![
+                self.configuration_label(i, field),
+                button(text(caption).size(14))
+                    .padding([5, 8])
+                    .width(CONTROL_WIDTH)
+                    .style(style::secondary)
+                    .on_press_maybe((!self.locked()).then_some(Message::CaptureKey(i)))
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into();
+        }
+        if (field.key == "LevelNumber" && field.group == "CustomMap") || field.key == "BitsPerPixel"
+        {
+            let options: Vec<String> = if field.key == "LevelNumber" {
+                std::iter::once("自动（第 2–11 关）".to_owned())
+                    .chain((1..=13).map(|n| format!("第 {n} 关")))
+                    .collect()
+            } else {
+                vec!["16 位".into(), "32 位".into()]
+            };
+            let selected = if field.key == "LevelNumber" {
+                field
+                    .value
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|i| options.get(i))
+                    .cloned()
+            } else {
+                match field.value.as_str() {
+                    "16" => options.first().cloned(),
+                    "32" => options.get(1).cloned(),
+                    _ => None,
+                }
+            };
+            let values = options.clone();
+            let level = field.key == "LevelNumber";
+            return row![
+                self.configuration_label(i, field),
+                pick_list(options, selected, move |label| {
+                    let index = values.iter().position(|v| *v == label).unwrap_or(0);
+                    Message::Field(
+                        i,
+                        if level {
+                            index.to_string()
+                        } else if index == 0 {
+                            "16".into()
+                        } else {
+                            "32".into()
+                        },
+                    )
+                })
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .into();
+        }
         if field.key == "Language" {
             const LANGUAGES: [&str; 5] = ["德语", "英语", "西班牙语", "意大利语", "法语"];
             let selected = field
@@ -1081,7 +1122,7 @@ impl App {
                 .and_then(|i| LANGUAGES.get(i))
                 .copied();
             return row![
-                text("游戏语言").size(14).width(Fill),
+                self.configuration_label(i, field),
                 pick_list(LANGUAGES.to_vec(), selected, move |label| Message::Field(
                     i,
                     LANGUAGES
@@ -1109,7 +1150,7 @@ impl App {
                 .into()
             };
             row![
-                text(crate::l10n::text("音量")).size(14).width(Fill),
+                self.configuration_label(i, field),
                 control,
                 text(format!("{:.0}%", value * 100.0)).size(14).width(44),
             ]
@@ -1118,7 +1159,7 @@ impl App {
             .into()
         } else if field.boolean {
             row![
-                self.configuration_label(field),
+                self.configuration_label(i, field),
                 iced::widget::toggler(field.enabled())
                     .size(18)
                     .style(style::toggle)
@@ -1130,28 +1171,9 @@ impl App {
             .spacing(12)
             .align_y(Alignment::Center)
             .into()
-        } else if field.key.starts_with("/key") {
-            let selected = field
-                .value
-                .parse::<i32>()
-                .ok()
-                .and_then(|id| crate::keys::ALL.iter().find(|key| key.id == id))
-                .copied();
-            row![
-                self.configuration_label(field),
-                pick_list(crate::keys::ALL, selected, move |key| Message::Field(
-                    i,
-                    key.id.to_string()
-                ))
-                .padding(5)
-                .width(CONTROL_WIDTH),
-            ]
-            .spacing(12)
-            .align_y(Alignment::Center)
-            .into()
         } else {
             row![
-                self.configuration_label(field),
+                self.configuration_label(i, field),
                 text_input("", &field.value)
                     .on_input(move |s| Message::Field(i, s))
                     .padding(5)
@@ -1240,11 +1262,13 @@ impl App {
                         container(
                             row![
                                 text("分辨率").size(14).width(Fill),
+                                self.restore_field(i, field),
                                 text_input("", &field.value)
                                     .on_input(move |v| Message::Field(i, v))
                                     .padding(5)
                                     .width(80),
                                 text("×").size(14),
+                                self.restore_field(hi, h),
                                 text_input("", &h.value)
                                     .on_input(move |v| Message::Field(hi, v))
                                     .padding(5)
@@ -1304,16 +1328,11 @@ impl App {
                     .filter_map(|p| p.file_name())
                     .map(|s| s.to_string_lossy().to_string()),
             );
-            toolbar = toolbar
-                .push(crate::hint::label(
-                    "配置来源",
-                    config::source_help(&self.config_name),
-                ))
-                .push(pick_list(
-                    names.into_iter().map(config::Choice).collect::<Vec<_>>(),
-                    Some(config::Choice(self.config_name.clone())),
-                    |choice| Message::SelectConfig(choice.0),
-                ));
+            toolbar = toolbar.push(pick_list(
+                names.into_iter().map(config::Choice).collect::<Vec<_>>(),
+                Some(config::Choice(self.config_name.clone())),
+                |choice| Message::SelectConfig(choice.0),
+            ));
         }
         let Some(doc) = &self.document else {
             return column![
@@ -1335,11 +1354,6 @@ impl App {
         let groups = doc.groups();
         toolbar = toolbar
             .push(search_input("搜索配置", &self.search, Message::Search))
-            .push(action(
-                if doc.dirty { "保存修改" } else { "保存" },
-                Message::SaveDocument,
-                doc.dirty && !self.locked(),
-            ))
             .push(action(
                 "重新读取",
                 Message::Refresh,
@@ -1390,26 +1404,24 @@ impl App {
         if shown == 0 {
             sections = sections.push(text(crate::l10n::text("没有匹配的配置项")).size(14));
         }
-        column![
-            toolbar,
-            scrollable(container(sections).padding(iced::Padding {
-                right: 16.0,
-                ..iced::Padding::ZERO
-            }))
+        let mut content = column![toolbar].spacing(16);
+        if let Some(error) = &self.save_error {
+            content = content.push(text(error).size(14));
+        }
+        content
+            .push(
+                scrollable(container(sections).padding(iced::Padding {
+                    right: 16.0,
+                    ..iced::Padding::ZERO
+                }))
+                .height(Fill),
+            )
             .height(Fill)
-        ]
-        .spacing(16)
-        .height(Fill)
-        .into()
+            .into()
     }
     fn save_data(&self, doc: &Document) -> Element<'_, Message> {
         let toolbar = row![
             search_input("搜索关卡或玩家", &self.search, Message::Search),
-            action(
-                if doc.dirty { "保存修改" } else { "保存" },
-                Message::SaveDocument,
-                doc.dirty && !self.locked()
-            ),
             action("全部解锁", Message::UnlockAll, !self.locked()),
             action("重新读取", Message::Refresh, !self.busy && !self.mutating)
         ]
@@ -1436,12 +1448,8 @@ impl App {
                 .find(|(_, f)| f.key == format!("/levelLock/{level}"));
             let control: Element<'_, Message> = if let Some((i, f)) = unlock {
                 row![
-                    text(if f.enabled() {
-                        "已解锁"
-                    } else {
-                        "未解锁"
-                    })
-                    .size(14),
+                    text("解锁").size(14),
+                    self.restore_field(i, f),
                     iced::widget::toggler(f.enabled())
                         .size(18)
                         .style(style::toggle)
@@ -1469,8 +1477,14 @@ impl App {
                 let mut ranks = column![
                     row![
                         text("排名").size(14).width(48),
-                        text("玩家").size(14).width(Fill),
-                        text("分数").size(14).width(CONTROL_WIDTH)
+                        row![text("玩家").size(14).width(Fill), space().width(24)]
+                            .spacing(6)
+                            .width(Fill),
+                        row![
+                            text("分数").size(14).width(CONTROL_WIDTH),
+                            space().width(24)
+                        ]
+                        .spacing(6)
                     ]
                     .spacing(10)
                 ]
@@ -1491,12 +1505,23 @@ impl App {
                             container(
                                 row![
                                     text((rank + 1).to_string()).size(14).width(48),
-                                    text_input("玩家", &p.value)
-                                        .on_input(move |s| Message::Field(pi, s))
-                                        .width(Fill),
-                                    text_input("分数", &v.value)
-                                        .on_input(move |s| Message::Field(si, s))
-                                        .width(CONTROL_WIDTH)
+                                    row![
+                                        text_input("玩家", &p.value)
+                                            .on_input(move |s| Message::Field(pi, s))
+                                            .width(Fill),
+                                        self.restore_field(pi, p)
+                                    ]
+                                    .spacing(6)
+                                    .align_y(Alignment::Center)
+                                    .width(Fill),
+                                    row![
+                                        text_input("分数", &v.value)
+                                            .on_input(move |s| Message::Field(si, s))
+                                            .width(CONTROL_WIDTH),
+                                        self.restore_field(si, v)
+                                    ]
+                                    .spacing(6)
+                                    .align_y(Alignment::Center)
                                 ]
                                 .spacing(10)
                                 .align_y(Alignment::Center),
@@ -1514,13 +1539,14 @@ impl App {
                 levels = levels.push(config_branch(ranks.into()));
             }
         }
-        column![
-            toolbar,
-            scrollable(container(levels).padding(iced::Padding::ZERO.right(12))).height(Fill)
-        ]
-        .spacing(12)
-        .height(Fill)
-        .into()
+        let mut content = column![toolbar].spacing(12);
+        if let Some(error) = &self.save_error {
+            content = content.push(text(error).size(14));
+        }
+        content
+            .push(scrollable(container(levels).padding(iced::Padding::ZERO.right(12))).height(Fill))
+            .height(Fill)
+            .into()
     }
     fn profiles(&self) -> Element<'_, Message> {
         if self.instance.is_none() {
@@ -1739,11 +1765,6 @@ impl App {
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            row![
-                space::horizontal(),
-                action("清理已完成", Message::ClearJobs, true)
-            ]
-            .align_y(Alignment::Center)
         ]
         .spacing(8);
         if self.jobs.is_empty() {
@@ -1752,7 +1773,9 @@ impl App {
                     .size(14),
             );
         }
-        for job in &self.jobs {
+        let mut ordered: Vec<_> = self.jobs.iter().collect();
+        ordered.sort_by_cached_key(|job| job.progress().done);
+        for job in ordered {
             let progress = job.progress();
             let mut controls = row![
                 text(job.request.title()).size(15).width(Fill),
@@ -1814,6 +1837,29 @@ impl App {
             }
             list = list.push(separator());
         }
+        if self
+            .jobs
+            .iter()
+            .any(|job| self.finished_jobs.contains(&job.id))
+        {
+            list = list.push(
+                container(
+                    iced::widget::tooltip(
+                        button(crate::icons::view(crate::icons::Icon::Close, 16.0))
+                            .padding(7)
+                            .style(style::quiet)
+                            .on_press(Message::ClearJobs),
+                        container(text("清理已完成任务").size(14)).padding(8),
+                        iced::widget::tooltip::Position::FollowCursor,
+                    )
+                    .delay(std::time::Duration::ZERO)
+                    .gap(12)
+                    .style(style::menu),
+                )
+                .center_x(Fill)
+                .padding([6, 0]),
+            );
+        }
         scrollable(container(list).padding(iced::Padding {
             right: 16.0,
             ..iced::Padding::ZERO
@@ -1830,10 +1876,6 @@ impl App {
                 .on_toggle(move |v| Message::PrefBool(key.into(), v))
                 .into()
         };
-        let slots: Vec<_> = std::iter::once("自动（第 2–11 关）".to_owned())
-            .chain((1..=13).map(|n| format!("第 {n} 关")))
-            .collect();
-        let slot = slots[prefs.level_slot.min(13) as usize].clone();
         let mut backgrounds = column![text("首页背景").size(14)].spacing(10);
         if let Some(instance) = &self.instance {
             for chunk in instance.visuals.backgrounds.chunks(4) {
@@ -1841,14 +1883,11 @@ impl App {
                 for background in chunk {
                     choices = choices.push(
                         button(
-                            column![
-                                crate::cover::view(
-                                    background.thumbnail.clone(),
-                                    72.0,
-                                    iced::ContentFit::Fill
-                                ),
-                                container(text(&background.name).size(13)).padding([6, 8])
-                            ]
+                            column![crate::cover::view(
+                                background.thumbnail.clone(),
+                                72.0,
+                                iced::ContentFit::Fill
+                            ),]
                             .spacing(0),
                         )
                         .padding(2)
@@ -1896,19 +1935,6 @@ impl App {
                 "退出自制地图后关闭游戏",
                 "从启动器游玩自制地图时，离开地图就会关闭游戏。",
                 toggle(prefs.map_only, "map")
-            ),
-            self.preference_row(
-                "自制地图承载关卡",
-                "自制地图临时借用这个关卡的位置和成绩表，自动模式会在第 2–11 关中选择。",
-                pick_list(slots, Some(slot), |v| Message::PrefText(
-                    "slot".into(),
-                    if v.starts_with("自动") {
-                        "0".into()
-                    } else {
-                        v.split_whitespace().nth(1).unwrap_or("0").to_owned()
-                    }
-                ))
-                .into()
             ),
             self.preference_row(
                 "游戏启动提示",

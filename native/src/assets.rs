@@ -144,32 +144,18 @@ pub fn preview(path: &Path) -> Result<image::Handle, String> {
 #[derive(Clone, Debug)]
 pub struct Background {
     pub letter: String,
-    pub name: String,
     pub image: image::Handle,
     pub thumbnail: image::Handle,
 }
 fn backgrounds(dir: &Path) -> Vec<Background> {
     let mut result = Vec::new();
-    for (letter, name) in [
-        ("L", "第 1 关"),
-        ("E", "第 2 关"),
-        ("A", "第 3 关"),
-        ("F", "第 4 / 13 关"),
-        ("C", "第 5 关"),
-        ("H", "第 6 关"),
-        ("D", "第 7 关"),
-        ("G", "第 8 关"),
-        ("K", "第 9 关"),
-        ("B", "第 10 关"),
-        ("J", "第 11 关"),
-        ("I", "第 12 关"),
-        ("X", "自制地图"),
+    for letter in [
+        "L", "E", "A", "F", "C", "H", "D", "G", "K", "B", "J", "I", "X",
     ] {
         let path = dir.join(format!("Sky_{letter}_Front.bmp"));
         if let (Ok(image), Ok(thumbnail)) = (preview(&path), thumbnail(&path)) {
             result.push(Background {
                 letter: letter.into(),
-                name: name.into(),
                 image,
                 thumbnail,
             });
@@ -195,27 +181,6 @@ pub fn thumbnail(path: &Path) -> Result<image::Handle, String> {
         pixels.into_raw(),
     ))
 }
-pub fn local_thumbnail(root: &Path, entry: &crate::workspace::Entry) -> Option<image::Handle> {
-    if entry.directory {
-        return None;
-    }
-    let source = if matches!(
-        entry.kind,
-        crate::workspace::Kind::Skies | crate::workspace::Kind::Textures
-    ) {
-        Some(entry.path.clone())
-    } else {
-        ["png", "jpg", "jpeg", "webp"]
-            .into_iter()
-            .map(|ext| entry.path.with_extension(ext))
-            .find(|p| p.is_file())
-    }?;
-    let source = crate::workspace::checked(root, &source).ok()?;
-    thumbnail(&source).ok()
-}
-
-pub type Thumbnails = Vec<(std::path::PathBuf, Option<image::Handle>)>;
-
 #[cfg(test)]
 mod tests {
     use super::*;

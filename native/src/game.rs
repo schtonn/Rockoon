@@ -125,7 +125,10 @@ pub fn launch(
     let mut command = launch_command(instance, map)?;
     if map.is_some() {
         command.env("ROCKOON_MAP_ONLY", if prefs.map_only { "1" } else { "0" });
-        command.env("ROCKOON_LEVEL_SLOT", prefs.level_slot.to_string());
+        command.env(
+            "ROCKOON_LEVEL_SLOT",
+            crate::config::map_level(&instance.root, prefs.level_slot)?.to_string(),
+        );
     }
     if !prefs.motd.trim().is_empty() {
         command.env("ROCKOON_MOTD", &prefs.motd);

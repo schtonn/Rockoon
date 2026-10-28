@@ -109,6 +109,7 @@ pub struct Startup {
 pub enum Message {
     Hub(catalog::Action),
     Startup(Result<Startup, String>),
+    FolderMenu,
     PickFolder,
     FolderPicked(Option<PathBuf>),
     Loaded(Result<Instance, String>),
@@ -117,8 +118,6 @@ pub enum Message {
     CloseMenus,
     NoticeTick,
     Search(String),
-    LocalPage(usize),
-    LocalThumbnails(u64, Result<crate::assets::Thumbnails, String>),
     Refresh,
     Open(PathBuf),
     Opened(Result<(), String>),
@@ -164,7 +163,14 @@ pub enum Message {
     DocumentLoaded(u64, Result<(Document, Vec<PathBuf>), String>),
     ConfigSection(String, bool),
     Field(usize, String),
-    SaveDocument,
+    CaptureKey(usize),
+    RecordedKey(iced::keyboard::key::Physical),
+    CancelKeyCapture,
+    RestoreField(usize),
+    AutoSaveDue(u64),
+    AutoSaved(u64, Result<Document, config::SaveError>),
+    OverwriteSave,
+    CancelSaveConflict,
     ProfilesLoaded(u64, Result<Value, String>),
     Profile(profiles::Action),
     Patches(u64, Result<Vec<Patch>, String>),
@@ -273,6 +279,12 @@ impl Notice {
                 .min(1.0)
     }
 }
+#[derive(Clone, Debug)]
+struct KeyCapture {
+    field: usize,
+    encoding: crate::keys::Encoding,
+    unsupported: bool,
+}
 pub struct App {
     hub: crate::hub::State,
     home_active: bool,
@@ -308,12 +320,18 @@ pub struct App {
     component_error: Option<String>,
     versions_loading: bool,
     entries: Vec<Entry>,
-    local_page: usize,
-    local_previews: std::collections::HashMap<PathBuf, Option<iced::widget::image::Handle>>,
     directory: PathBuf,
     asset_kind: Kind,
     local_category: crate::hub::Category,
     document: Option<Document>,
+    key_capture: Option<KeyCapture>,
+    undo_values: std::collections::HashMap<(String, String), String>,
+    document_edit: u64,
+    saving: Option<Document>,
+    save_conflict: Option<String>,
+    save_error: Option<String>,
+    after_save: Option<Box<Message>>,
+    folder_menu: bool,
     config_files: Vec<PathBuf>,
     config_name: String,
     group: String,
@@ -389,12 +407,18 @@ impl App {
             component_error: None,
             versions_loading: false,
             entries: vec![],
-            local_page: 0,
-            local_previews: std::collections::HashMap::new(),
             directory: PathBuf::new(),
             asset_kind: Kind::Skies,
             local_category: crate::hub::Category::Map,
             document: None,
+            key_capture: None,
+            undo_values: std::collections::HashMap::new(),
+            document_edit: 0,
+            saving: None,
+            save_conflict: None,
+            save_error: None,
+            after_save: None,
+            folder_menu: false,
             config_files: vec![],
             config_name: "游戏设置".into(),
             group: String::new(),
@@ -509,6 +533,7 @@ impl App {
         self.notice = Some(Notice::new(message, Duration::from_secs(5)));
     }
     fn close_menus(&mut self) {
+        self.folder_menu = false;
         self.entry_menu = None;
     }
     fn save_preferences(&self) -> Task<Message> {
@@ -519,47 +544,12 @@ impl App {
             Message::Saved,
         )
     }
-    fn prepare_local_thumbnails(&mut self) -> Task<Message> {
-        let Some(root) = self.root() else {
-            return Task::none();
-        };
-        if self.local_previews.len() > 64 {
-            self.local_previews.clear();
-        }
-        let entries: Vec<_> = self
-            .entries
-            .iter()
-            .filter(|e| workspace::matches(&e.name, &self.search))
-            .skip(self.local_page * crate::hub::PAGE_SIZE)
-            .take(crate::hub::PAGE_SIZE)
-            .filter(|e| !self.local_previews.contains_key(&e.path))
-            .cloned()
-            .collect();
-        for entry in &entries {
-            self.local_previews.insert(entry.path.clone(), None);
-        }
-        if entries.is_empty() {
-            return Task::none();
-        }
-        let revision = self.revision;
-        Task::perform(
-            background(move || {
-                Ok(entries
-                    .into_iter()
-                    .map(|e| {
-                        let thumbnail = crate::assets::local_thumbnail(&root, &e);
-                        (e.path, thumbnail)
-                    })
-                    .collect())
-            }),
-            move |r| Message::LocalThumbnails(revision, r),
-        )
-    }
     fn reload(&mut self) -> Task<Message> {
+        self.document_edit += 1;
+        self.key_capture = None;
+        self.save_error = None;
         self.revision += 1;
         let revision = self.revision;
-        self.local_previews.clear();
-        self.local_page = 0;
         self.busy = false;
         self.preview_revision += 1;
         self.skybox = None;
@@ -693,7 +683,83 @@ impl App {
             Message::Started,
         )
     }
+    fn schedule_save(&mut self) -> Task<Message> {
+        self.document_edit += 1;
+        self.save_error = None;
+        let edit = self.document_edit;
+        Task::perform(
+            async move {
+                tokio::time::sleep(Duration::from_millis(450)).await;
+                edit
+            },
+            Message::AutoSaveDue,
+        )
+    }
+    fn save_document(&mut self, overwrite: bool) -> Task<Message> {
+        if self.saving.is_some() || self.save_conflict.is_some() && !overwrite {
+            return Task::none();
+        }
+        let (Some(root), Some(doc)) = (self.root(), self.document.clone()) else {
+            return Task::none();
+        };
+        if !doc.dirty {
+            return Task::none();
+        }
+        self.saving = Some(doc.clone());
+        self.save_conflict = None;
+        self.save_error = None;
+        let edit = self.document_edit;
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || doc.persist(&root, overwrite))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string().into()))
+            },
+            move |result| Message::AutoSaved(edit, result),
+        )
+    }
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // Finish pending writes before changing the document, instance, or game files.
+        let leaves_document = match &message {
+            Message::Page(page) => *page != self.page,
+            Message::SelectConfig(name) => *name != self.config_name,
+            Message::Refresh
+            | Message::PickFolder
+            | Message::Quit
+            | Message::Exit
+            | Message::Launch(_)
+            | Message::LaunchAnyway(_)
+            | Message::Profile(_)
+            | Message::EditComponents(_)
+            | Message::InstallGame
+            | Message::InstallPatch(_)
+            | Message::BrowseLocalResources
+            | Message::Import
+            | Message::ImportRemote
+            | Message::OpenTas
+            | Message::TasPlay(_)
+            | Message::ApplyUpdate
+            | Message::FilesPicked(_)
+            | Message::FolderPicked(Some(_))
+            | Message::Toggle(_)
+            | Message::UndoDelete
+            | Message::InstallPicked(_)
+            | Message::RetryJob(_)
+            | Message::DownloadUpdate
+            | Message::DisableAutoplay(_)
+            | Message::Prompt(PromptKind::Restore) => true,
+            _ => false,
+        };
+        if leaves_document {
+            self.key_capture = None;
+        }
+        if leaves_document
+            && (self.saving.is_some() || self.document.as_ref().is_some_and(|d| d.dirty))
+        {
+            self.key_capture = None;
+            self.after_save = Some(Box::new(message));
+            return self.save_document(false);
+        }
         if let Message::Hub(action) = message {
             return self.update_catalog(action);
         }
@@ -713,6 +779,7 @@ impl App {
         }
         match message {
             Message::Hub(_) => unreachable!(),
+            Message::FolderMenu => self.folder_menu = !self.folder_menu,
             Message::CloseMenus => self.close_menus(),
             Message::NoticeTick => {
                 if self
@@ -800,11 +867,6 @@ impl App {
                 }
             }
             Message::PickFolder if !self.locked() && !self.picking_folder => {
-                if self.document.as_ref().is_some_and(|d| d.dirty) {
-                    return self.update(Message::Prompt(PromptKind::Discard(Box::new(
-                        Message::PickFolder,
-                    ))));
-                }
                 self.picking_folder = true;
                 let initial = self.root();
                 return Task::perform(
@@ -874,14 +936,6 @@ impl App {
                     return self.update(Message::OpenTas);
                 }
 
-                if self.document.as_ref().is_some_and(|d| d.dirty) && page != self.page {
-                    self.prompt = Some(Prompt {
-                        title: "放弃尚未保存的配置？".into(),
-                        input: String::new(),
-                        kind: PromptKind::Discard(Box::new(Message::Page(page))),
-                    });
-                    return Task::none();
-                }
                 self.page = page;
                 if let Some(kind) = self.kind() {
                     self.local_category = crate::hub::Category::from_kind(kind);
@@ -898,51 +952,8 @@ impl App {
                 }
                 return self.update(*next);
             }
-            Message::Search(s) => {
-                self.search = s;
-                self.local_page = 0;
-                if self.page.section() == Page::Maps && self.page != Page::Hub {
-                    return self.prepare_local_thumbnails();
-                }
-            }
-            Message::LocalPage(page) => {
-                let total = self
-                    .entries
-                    .iter()
-                    .filter(|e| workspace::matches(&e.name, &self.search))
-                    .count();
-                self.local_page = page.min(total.div_ceil(crate::hub::PAGE_SIZE).max(1) - 1);
-                return self.prepare_local_thumbnails();
-            }
-            Message::LocalThumbnails(revision, result) => {
-                if revision == self.revision {
-                    match result {
-                        Ok(images) => {
-                            self.local_previews.extend(images);
-                            if self.local_previews.len() > 64 {
-                                let visible: std::collections::HashSet<_> = self
-                                    .entries
-                                    .iter()
-                                    .filter(|e| workspace::matches(&e.name, &self.search))
-                                    .skip(self.local_page * crate::hub::PAGE_SIZE)
-                                    .take(crate::hub::PAGE_SIZE)
-                                    .map(|e| e.path.clone())
-                                    .collect();
-                                self.local_previews.retain(|path, _| visible.contains(path));
-                            }
-                        }
-                        Err(e) => self.error(e),
-                    }
-                }
-            }
-            Message::Refresh => {
-                if self.document.as_ref().is_some_and(|d| d.dirty) {
-                    return self.update(Message::Prompt(PromptKind::Discard(Box::new(
-                        Message::Refresh,
-                    ))));
-                }
-                return self.reload();
-            }
+            Message::Search(s) => self.search = s,
+            Message::Refresh => return self.reload(),
             Message::Open(path) => {
                 return Task::perform(
                     background(move || game::open_folder(&path)),
@@ -970,10 +981,7 @@ impl App {
                 match result {
                     Ok(entries) => {
                         self.entries = entries;
-                        return Task::batch([
-                            self.prepare_local_thumbnails(),
-                            self.catalog_receipts(),
-                        ]);
+                        return self.catalog_receipts();
                     }
                     Err(e) => self.error(e),
                 }
@@ -1174,7 +1182,7 @@ impl App {
                     PromptKind::Restore => {
                         ("恢复原版关卡文件？现有文件会保留备份。", String::new())
                     }
-                    PromptKind::ResetData => ("重置当前关卡排行榜？保存后生效。", String::new()),
+                    PromptKind::ResetData => ("重置当前关卡排行榜？", String::new()),
                     PromptKind::Discard(_) => ("放弃尚未保存的修改？", String::new()),
                 };
                 self.prompt = Some(Prompt {
@@ -1265,6 +1273,7 @@ impl App {
                                 }
                                 doc.dirty = true;
                             }
+                            return self.schedule_save();
                         }
                     }
                 }
@@ -1437,17 +1446,10 @@ impl App {
                     }
                     doc.dirty = true;
                 }
+                return self.schedule_save();
             }
             Message::SelectConfig(name) => {
                 if name == self.config_name {
-                    return Task::none();
-                }
-                if self.document.as_ref().is_some_and(|d| d.dirty) {
-                    self.prompt = Some(Prompt {
-                        title: "放弃尚未保存的配置？".into(),
-                        input: String::new(),
-                        kind: PromptKind::Discard(Box::new(Message::SelectConfig(name))),
-                    });
                     return Task::none();
                 }
                 self.config_name = name;
@@ -1462,6 +1464,11 @@ impl App {
                 match result {
                     Ok((doc, files)) => {
                         self.group = doc.groups().first().cloned().unwrap_or_default();
+                        self.undo_values = doc
+                            .fields
+                            .iter()
+                            .map(|f| ((f.key.clone(), f.group.clone()), f.value.clone()))
+                            .collect();
                         self.document = Some(doc);
                         self.config_files = files;
                     }
@@ -1476,6 +1483,37 @@ impl App {
                 self.config_sections
                     .insert(format!("{}:{group}", self.config_name), open);
             }
+            Message::CaptureKey(i) if !self.locked() => {
+                if self.key_capture.as_ref().is_some_and(|c| c.field == i) {
+                    self.key_capture = None;
+                } else if let Some(encoding) = self
+                    .document
+                    .as_ref()
+                    .and_then(|d| d.fields.get(i))
+                    .and_then(|f| f.key_encoding())
+                {
+                    self.key_capture = Some(KeyCapture {
+                        field: i,
+                        encoding,
+                        unsupported: false,
+                    });
+                }
+            }
+            Message::CancelKeyCapture => self.key_capture = None,
+            Message::RecordedKey(physical) => {
+                if physical == iced::keyboard::key::Code::Escape {
+                    self.key_capture = None;
+                    return Task::none();
+                }
+                if let Some(capture) = &mut self.key_capture {
+                    if let Some(value) = crate::keys::encode(capture.encoding, physical) {
+                        let index = capture.field;
+                        self.key_capture = None;
+                        return self.update(Message::Field(index, value.to_string()));
+                    }
+                    capture.unsupported = true;
+                }
+            }
             Message::Field(i, value) => {
                 if self.locked() {
                     return Task::none();
@@ -1485,15 +1523,63 @@ impl App {
                 {
                     field.value = value;
                     doc.dirty = true;
+                    return self.schedule_save();
                 }
             }
-            Message::SaveDocument => {
-                if let (Some(root), Some(doc)) = (self.root(), self.document.clone()) {
-                    return self.change(move || {
-                        doc.save(&root)?;
-                        Ok("已保存".into())
-                    });
+            Message::RestoreField(i) => {
+                if let Some(value) = self
+                    .document
+                    .as_ref()
+                    .and_then(|d| d.fields.get(i))
+                    .and_then(|f| self.undo_values.get(&(f.key.clone(), f.group.clone())))
+                    .cloned()
+                {
+                    self.key_capture = None;
+                    return self.update(Message::Field(i, value));
                 }
+            }
+            Message::AutoSaveDue(edit) => {
+                if edit == self.document_edit && self.save_error.is_none() {
+                    return self.save_document(false);
+                }
+            }
+            Message::AutoSaved(edit, result) => {
+                let Some(saved) = self.saving.take() else {
+                    return Task::none();
+                };
+                match result {
+                    Ok(mut fresh) => {
+                        if edit != self.document_edit
+                            && let Some(current) = &self.document
+                        {
+                            fresh.rebase(&saved, current);
+                        }
+                        let dirty = fresh.dirty;
+                        self.document = Some(fresh);
+                        self.save_error = None;
+                        if dirty {
+                            return self.save_document(false);
+                        }
+                        if let Some(next) = self.after_save.take() {
+                            return self.update(*next);
+                        }
+                    }
+                    Err(e) if e.conflict => self.save_conflict = Some(e.message),
+                    Err(e) => {
+                        if edit != self.document_edit {
+                            return self.save_document(false);
+                        }
+                        self.save_error = Some(e.message);
+                        self.after_save = None;
+                    }
+                }
+            }
+            Message::OverwriteSave => return self.save_document(true),
+            Message::CancelSaveConflict => {
+                self.save_conflict = None;
+                self.after_save = None;
+                self.document = None;
+                return self.reload();
             }
             Message::ProfilesLoaded(revision, result) => {
                 if revision != self.revision {
@@ -1804,7 +1890,7 @@ impl App {
                             match jobs::deep_link(&value) {
                                 Ok(url) => {
                                     self.import_url = url;
-                                    self.page = Page::Tasks;
+                                    requests.push(self.update(Message::Page(Page::Tasks)));
                                 }
                                 Err(e) => self.error(e),
                             }
@@ -2296,7 +2382,7 @@ impl App {
                 );
             }
             Message::Quit => {
-                if self.document.as_ref().is_some_and(|d| d.dirty) || self.tas.dirty {
+                if self.tas.dirty {
                     self.prompt = Some(Prompt {
                         title: "放弃尚未保存或导出的修改并退出？".into(),
                         input: String::new(),
@@ -2338,6 +2424,7 @@ impl App {
                 self.home_active = true;
             }
             Message::Event(iced::Event::Window(iced::window::Event::Unfocused)) => {
+                self.key_capture = None;
                 self.home_active = false;
             }
             Message::Event(iced::Event::Window(iced::window::Event::Resized(_))) => {
@@ -2498,6 +2585,101 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn editable_config() -> (tempfile::TempDir, App) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Test.cfg");
+        std::fs::write(&path, "General {\n I Limit 60\n}\n").unwrap();
+        let (mut app, _) = App::new();
+        app.instance = Some(Instance {
+            visuals: crate::assets::GameAssets::load(root.path()),
+            components: vec![],
+            root: root.path().into(),
+            maps: vec![],
+            mods: vec![],
+        });
+        app.busy = false;
+        app.page = Page::Config;
+        let doc = config::load(root.path(), Source::File(path)).unwrap();
+        let _ = app.update(Message::DocumentLoaded(app.revision, Ok((doc, vec![]))));
+        (root, app)
+    }
+    #[test]
+    fn navigation_waits_for_autosave_and_undo_remains_available_after_saving() {
+        let (root, mut app) = editable_config();
+        let _ = app.update(Message::Field(0, "120".into()));
+        let _ = app.update(Message::Page(Page::Home));
+        assert_eq!(app.page, Page::Config);
+        assert!(app.after_save.is_some());
+        let saved = app
+            .saving
+            .as_ref()
+            .unwrap()
+            .persist(root.path(), false)
+            .unwrap();
+        let _ = app.update(Message::AutoSaved(app.document_edit, Ok(saved)));
+        assert_eq!(app.page, Page::Home);
+        assert!(app.after_save.is_none());
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("Test.cfg")).unwrap(),
+            "General {\r\n\tI Limit 120\r\n}\r\n"
+        );
+
+        let (root, mut app) = editable_config();
+        let _ = app.update(Message::Field(0, "120".into()));
+        let _ = app.update(Message::AutoSaveDue(app.document_edit));
+        let saved = app
+            .saving
+            .as_ref()
+            .unwrap()
+            .persist(root.path(), false)
+            .unwrap();
+        let _ = app.update(Message::AutoSaved(app.document_edit, Ok(saved)));
+        assert!(!app.document.as_ref().unwrap().dirty);
+        let _ = app.update(Message::RestoreField(0));
+        assert_eq!(app.document.as_ref().unwrap().fields[0].value, "60");
+        assert!(app.document.as_ref().unwrap().dirty);
+    }
+    #[test]
+    fn conflict_cancel_keeps_the_external_file_and_abandons_pending_navigation() {
+        let (root, mut app) = editable_config();
+        let _ = app.update(Message::Field(0, "120".into()));
+        let _ = app.update(Message::Page(Page::Home));
+        let external = "General {\n I Limit 90\n}\n";
+        std::fs::write(root.path().join("Test.cfg"), external).unwrap();
+        let result = app.saving.as_ref().unwrap().persist(root.path(), false);
+        let _ = app.update(Message::AutoSaved(app.document_edit, result));
+        assert!(app.save_conflict.is_some());
+        assert_eq!(app.page, Page::Config);
+        let _ = app.update(Message::CancelSaveConflict);
+        assert!(app.save_conflict.is_none());
+        assert!(app.after_save.is_none());
+        assert!(app.document.is_none());
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("Test.cfg")).unwrap(),
+            external
+        );
+    }
+    #[test]
+    fn escape_cancels_recording_without_touching_the_config() {
+        use iced::keyboard::key::{Code, Physical};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("Test.cfg");
+        std::fs::write(&path, "General {\n K Hotkey 57\n}\n").unwrap();
+        let (mut app, _) = App::new();
+        app.busy = false;
+        app.document = Some(config::load(root.path(), Source::File(path)).unwrap());
+        let _ = app.update(Message::CaptureKey(0));
+        assert!(app.key_capture.is_some());
+        let _ = app.update(Message::RecordedKey(Physical::Code(Code::Escape)));
+        assert!(app.key_capture.is_none());
+        assert_eq!(app.document.as_ref().unwrap().fields[0].value, "57");
+        assert!(!app.document.as_ref().unwrap().dirty);
+        let _ = app.update(Message::CaptureKey(0));
+        let _ = app.update(Message::RecordedKey(Physical::Code(Code::ArrowUp)));
+        assert!(app.key_capture.is_none());
+        assert_eq!(app.document.as_ref().unwrap().fields[0].value, "200");
+        assert!(app.document.as_ref().unwrap().dirty);
+    }
     #[test]
     fn switching_component_or_cancelling_ignores_previous_version_response() {
         let (mut app, _) = App::new();
