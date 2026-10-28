@@ -140,6 +140,11 @@ pub fn quiet(theme: &Theme, status: button::Status) -> button::Style {
         ..button::Style::default()
     }
 }
+pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
+    let mut style = quiet(theme, status);
+    style.border = outline(colors(theme).line);
+    style
+}
 pub fn sky_button(_: &Theme, status: button::Status) -> button::Style {
     button::Style {
         text_color: Color::WHITE,

@@ -6,7 +6,7 @@ use std::{
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{
-        Arc, LazyLock, Mutex,
+        Arc, Condvar, LazyLock, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{Duration, Instant},
@@ -135,6 +135,11 @@ pub enum Request {
         url: String,
         sky: String,
     },
+    SkyFiles {
+        root: PathBuf,
+        dir: PathBuf,
+        files: Vec<PathBuf>,
+    },
     Local {
         root: PathBuf,
         files: Vec<PathBuf>,
@@ -149,7 +154,8 @@ impl Request {
             | Self::Patch { root, .. }
             | Self::Resource { root, .. }
             | Self::Brp { root, .. }
-            | Self::Local { root, .. } => root,
+            | Self::Local { root, .. }
+            | Self::SkyFiles { root, .. } => root,
             #[cfg(not(windows))]
             Self::Wine { root } => root,
         }
@@ -186,6 +192,7 @@ impl Request {
             Self::Resource { package, .. } => package.title().into(),
             Self::Brp { .. } => "导入资源包".into(),
             Self::Local { .. } => "导入本地资源包".into(),
+            Self::SkyFiles { .. } => "导入天空盒".into(),
         }
     }
 }
@@ -198,6 +205,7 @@ pub struct Progress {
     pub done: bool,
     pub result: Option<Result<String, String>>,
     pub cancellable: bool,
+    pub sky_prompt: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct Job {
@@ -205,6 +213,7 @@ pub struct Job {
     pub request: Request,
     pub state: Arc<Mutex<Progress>>,
     pub cancelled: Arc<AtomicBool>,
+    sky_choice: Arc<(Mutex<Option<String>>, Condvar)>,
 }
 impl Job {
     pub fn new(request: Request) -> Self {
@@ -219,8 +228,10 @@ impl Job {
                 done: false,
                 result: None,
                 cancellable: true,
+                sky_prompt: None,
             })),
             cancelled: Arc::new(AtomicBool::new(false)),
+            sky_choice: Arc::new((Mutex::new(None), Condvar::new())),
         }
     }
     pub fn progress(&self) -> Progress {
@@ -228,6 +239,44 @@ impl Job {
     }
     pub fn cancel(&self) {
         self.cancelled.store(true, Ordering::Relaxed);
+        let _choice = self.sky_choice.0.lock().unwrap_or_else(|e| e.into_inner());
+        self.sky_choice.1.notify_all();
+    }
+    pub fn choose_sky(&self, letter: String) {
+        if !matches!(
+            letter.as_str(),
+            "X" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+        ) {
+            return;
+        }
+        let mut choice = self.sky_choice.0.lock().unwrap_or_else(|e| e.into_inner());
+        *choice = Some(letter);
+        self.sky_choice.1.notify_all();
+    }
+    fn choose_sky_target(&self, name: &str) -> Result<String, String> {
+        self.check()?;
+        let (choice, ready) = &*self.sky_choice;
+        let mut choice = choice.lock().map_err(error)?;
+        if choice.is_none() {
+            let mut state = self.state.lock().map_err(error)?;
+            state.phase = "等待选择关卡".into();
+            state.cancellable = true;
+            state.sky_prompt = Some(name.to_owned());
+        }
+        while choice.is_none() && !self.cancelled.load(Ordering::Relaxed) {
+            choice = ready.wait(choice).map_err(error)?;
+        }
+        self.state.lock().map_err(error)?.sky_prompt = None;
+        self.check()?;
+        choice.clone().ok_or_else(|| "未选择天空盒关卡".into())
+    }
+    fn sky_for_archive(&self, root: &Path, file: &Path, fallback: &str) -> Result<String, String> {
+        let info = rockoon_core::brp::validate_brp(file, root).map_err(error)?;
+        if info.manifest.category == "sky" {
+            self.choose_sky_target(info.manifest.name.as_deref().unwrap_or("天空盒"))
+        } else {
+            Ok(fallback.into())
+        }
     }
     fn check(&self) -> Result<(), String> {
         if self.cancelled.load(Ordering::Relaxed) {
@@ -245,6 +294,7 @@ impl Job {
         let result = self.execute();
         if let Ok(mut s) = self.state.lock() {
             s.done = true;
+            s.sky_prompt = None;
             s.cancellable = false;
             s.phase = match &result {
                 Ok(_) => "完成",
@@ -530,15 +580,24 @@ impl Job {
                 self.patch(root, patch, version.as_ref())?;
                 Ok("补丁安装完成".into())
             }
+            Request::SkyFiles { root, dir, files } => {
+                let sky = self.choose_sky_target("本地天空盒")?;
+                self.check()?;
+                self.phase("导入");
+                self.state.lock().map_err(error)?.cancellable = false;
+                workspace::import_sky_files(root, dir, files, &sky)?;
+                Ok("已导入天空盒".into())
+            }
             Request::Local { root, files, sky } => {
                 let mut reports = Vec::new();
                 for file in files {
                     self.check()?;
+                    let sky = self.sky_for_archive(root, file, sky)?;
                     self.phase("导入");
                     if let Ok(mut s) = self.state.lock() {
                         s.cancellable = false;
                     }
-                    reports.push(workspace::brp(root, file, sky)?);
+                    reports.push(workspace::brp(root, file, &sky)?);
                 }
                 Ok(reports.join("\n"))
             }
@@ -560,11 +619,12 @@ impl Job {
                 for url in queue {
                     let file = self.download(&url)?;
                     self.check()?;
+                    let sky = self.sky_for_archive(root, file.path(), sky)?;
                     self.phase("安装");
                     if let Ok(mut state) = self.state.lock() {
                         state.cancellable = false;
                     }
-                    let (message, installed) = workspace::brp_files(root, file.path(), sky)?;
+                    let (message, installed) = workspace::brp_files(root, file.path(), &sky)?;
                     reports.push(message);
                     paths.extend(installed);
                 }
@@ -579,11 +639,12 @@ impl Job {
                 for url in queue {
                     let file = self.download(&url)?;
                     self.check()?;
+                    let sky = self.sky_for_archive(root, file.path(), sky)?;
                     self.phase("导入");
                     if let Ok(mut s) = self.state.lock() {
                         s.cancellable = false;
                     }
-                    reports.push(workspace::brp(root, file.path(), sky)?);
+                    reports.push(workspace::brp(root, file.path(), &sky)?);
                 }
                 Ok(reports.join("\n"))
             }
@@ -748,6 +809,89 @@ pub fn patch_updates(root: &Path) -> Result<Vec<Patch>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn wait_for_sky_prompt(job: &Job) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while job.progress().sky_prompt.is_none() {
+            assert!(
+                !job.progress().done,
+                "job ended before asking for a sky target"
+            );
+            assert!(Instant::now() < deadline, "sky prompt was not reached");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    fn sky_archive(path: &Path) {
+        let mut zip = zip::ZipWriter::new(fs::File::create(path).unwrap());
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("manifest.json", options).unwrap();
+        zip.write_all(br#"{"manifest_version":1,"category":"sky","name":"Sky test"}"#)
+            .unwrap();
+        for face in ["Back", "Down", "Front", "Left", "Right"] {
+            zip.start_file(format!("content/Sky_X_{face}.bmp"), options)
+                .unwrap();
+            zip.write_all(b"replacement face").unwrap();
+        }
+        zip.finish().unwrap();
+    }
+    #[test]
+    fn sky_archive_waits_for_target_and_cancelling_preserves_files() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("Textures/Sky")).unwrap();
+        let target = root.path().join("Textures/Sky/Sky_L_Front.bmp");
+        fs::write(&target, b"original").unwrap();
+        let archive = root.path().join("sky.brp");
+        sky_archive(&archive);
+        let job = Job::new(Request::Local {
+            root: root.path().to_owned(),
+            files: vec![archive.clone()],
+            sky: "X".into(),
+        });
+        let worker = job.clone();
+        let running = std::thread::spawn(move || worker.run());
+        wait_for_sky_prompt(&job);
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert!(!root.path().join(".rockoon/backups").exists());
+        job.cancel();
+        assert_eq!(running.join().unwrap().unwrap_err(), "已取消");
+        assert_eq!(fs::read(&target).unwrap(), b"original");
+        assert!(!root.path().join("Textures/Sky/Sky_X_Front.bmp").exists());
+
+        let job = Job::new(Request::Local {
+            root: root.path().to_owned(),
+            files: vec![archive],
+            sky: "X".into(),
+        });
+        let worker = job.clone();
+        let running = std::thread::spawn(move || worker.run());
+        wait_for_sky_prompt(&job);
+        job.choose_sky("L".into());
+        running.join().unwrap().unwrap();
+        assert_eq!(fs::read(&target).unwrap(), b"replacement face");
+        assert!(!root.path().join("Textures/Sky/Sky_X_Front.bmp").exists());
+        assert!(root.path().join(".rockoon/backups").is_dir());
+    }
+    #[test]
+    fn raw_sky_import_replaces_only_selected_target() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("Textures/Sky");
+        fs::create_dir_all(&dir).unwrap();
+        let source = root.path().join("Sky_X_Front.bmp");
+        fs::write(&source, b"new").unwrap();
+        fs::write(dir.join("Sky_A_Front.bmp"), b"old").unwrap();
+        fs::write(dir.join("Sky_L_Front.bmp"), b"untouched").unwrap();
+        let job = Job::new(Request::SkyFiles {
+            root: root.path().to_owned(),
+            dir: dir.clone(),
+            files: vec![source],
+        });
+        let worker = job.clone();
+        let running = std::thread::spawn(move || worker.run());
+        wait_for_sky_prompt(&job);
+        job.choose_sky("A".into());
+        running.join().unwrap().unwrap();
+        assert_eq!(fs::read(dir.join("Sky_A_Front.bmp")).unwrap(), b"new");
+        assert_eq!(fs::read(dir.join("Sky_L_Front.bmp")).unwrap(), b"untouched");
+    }
     #[test]
     fn resource_plan_keeps_selected_version_and_deduplicates_shared_dependencies() {
         let queue = plan_import(

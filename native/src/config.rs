@@ -121,7 +121,94 @@ fn label(key: &str) -> String {
         "LogMode" => "日志",
         "Verbose" => "详细日志",
         "ManualSetup" => "手动设置",
+        "Driver" => "显示驱动",
+        "BitsPerPixel" => "色深",
+        "X" => "窗口横坐标",
+        "Y" => "窗口纵坐标",
+        "Debug" => "调试模式",
+        "DisableDithering" => "禁用色彩抖动",
+        "DisableSpecular" => "禁用镜面反射",
+        "DisableMipmap" => "禁用多级纹理",
+        "DisablePerspectiveCorrection" => "禁用透视校正",
+        "ForceLinearFog" => "强制线性雾",
+        "ForceSoftware" => "强制软件处理",
+        "DisableFilter" => "禁用纹理过滤",
+        "EnsureVertexShader" => "确保顶点着色器可用",
+        "UseIndexBuffers" => "使用索引缓冲",
+        "SortTransparentObjects" => "透明物体排序",
+        "TextureCacheManagement" => "纹理缓存管理",
+        "EnableDebugMode" => "启用调试",
+        "EnableScreenDump" => "允许截图",
         _ => key,
+    }
+    .into()
+}
+fn builtin_config(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|s| s.to_str()),
+        Some("BML.cfg" | "CameraUtilities.cfg" | "DebugUtilities.cfg")
+    )
+}
+fn mod_label(path: &Path, key: &str) -> String {
+    if !builtin_config(path) {
+        return label(key);
+    }
+    match key {
+        "FontFilename" => "字体文件",
+        "FontSize" => "字号",
+        "FontRanges" => "字形范围",
+        "EnableSecondaryFont" => "使用备用字体",
+        "SecondaryFontFilename" => "备用字体文件",
+        "SecondaryFontSize" => "备用字号",
+        "SecondaryFontRanges" => "备用字形范围",
+        "EnableIniSettings" => "记住菜单布局",
+        "ShowTitle" => "显示标题",
+        "ShowFPS" => "显示帧率",
+        "ShowSRTimer" => "显示速通计时",
+        "FPSUpdateFrequency" => "帧率刷新间隔",
+        "UnlockFrameRate" => "解除帧率限制",
+        "SetMaxFrameRate" => "帧率上限",
+        "WidescreenFix" => "宽屏适配",
+        "LanternAlphaTest" => "优化灯笼透明效果",
+        "FixLifeBallFreeze" => "修复拾取生命球卡顿",
+        "Overclock" => "跳过出场等待",
+        "MessageDuration" => "消息显示时长",
+        "TabColumns" => "制表符宽度",
+        "LineSpacing" => "消息行距",
+        "MessageBackgroundAlpha" => "消息背景不透明度",
+        "WindowBackgroundAlpha" => "命令窗口不透明度",
+        "FadeMaxAlpha" => "淡入时最大不透明度",
+        "LevelNumber" => "自制地图承载关卡",
+        "ShowTooltip" => "显示地图信息",
+        "MaxDepth" => "文件夹浏览深度",
+        "Enable" => "启用相机工具",
+        "Reset" => "重置相机",
+        "Rotate45" => "切换为 45 度视角",
+        "RotateLeft" => "相机左转",
+        "RotateRight" => "相机右转",
+        "MoveUp" => "向上移动",
+        "MoveDown" => "向下移动",
+        "MoveFront" => "向前移动",
+        "MoveBack" => "向后移动",
+        "MoveLeft" => "向左移动",
+        "MoveRight" => "向右移动",
+        "EnableSuicideKey" => "启用自杀快捷键",
+        "Suicide" => "自杀",
+        "BallUp" => "向上推球",
+        "BallDown" => "向下推球",
+        "TurnPaper" => "变成纸球",
+        "TurnWood" => "变成木球",
+        "TurnStone" => "变成石球",
+        "ResetBall" => "重置球和机关",
+        "AddLife" => "增加一条生命",
+        "BallSpeedUp" => "三倍球速",
+        "SpeedNotification" => "显示球速变化",
+        "SkipRender" => "按住时跳过画面绘制",
+        "PaperBall" => "生成纸球",
+        "WoodBall" => "生成木球",
+        "StoneBall" => "生成石球",
+        "Box" => "生成箱子",
+        _ => return label(key),
     }
     .into()
 }
@@ -199,7 +286,10 @@ pub fn group_label(group: &str) -> &str {
         "Camera" => "相机",
         "Debug" => "调试",
         "Auxiliaries" => "临时辅助物体",
-        "General" => "常规",
+        "General" | "Settings" | "Game" => "常规",
+        "Window" => "窗口",
+        "CommandBar" => "命令与消息",
+        "CustomMap" => "自制地图",
         _ => group,
     }
 }
@@ -212,6 +302,24 @@ impl Document {
                     .find(|f| f.key == field.key)
                     .and_then(|f| part.field_help(f))
             });
+        }
+        if let Source::File(path) = &self.source
+            && builtin_config(path)
+        {
+            return match field.key.as_str() {
+                "Enable" if field.group == "Camera" => Some("仅在游戏作弊模式下生效。"),
+                "SetMaxFrameRate" => Some("设为 0 使用垂直同步，解除帧率限制后此项无效。"),
+                "FontRanges" | "SecondaryFontRanges" => {
+                    Some("显示中文请选择 Chinese 或 ChineseFull。")
+                }
+                "LevelNumber" => Some("设为 0 随机借用第 2–11 关，否则使用指定关卡。"),
+                "MaxDepth" => Some("限制地图菜单可以进入的文件夹层数。"),
+                "Overclock" => Some("跳过开局和复活时等待球落下的过程。"),
+                "LanternAlphaTest" => Some("改变灯笼的透明绘制方式来提高帧率。"),
+                "FPSUpdateFrequency" => Some("每隔指定帧数更新一次帧率数值。"),
+                _ => None,
+            }
+            .map(str::to_owned);
         }
         let end = field.line?;
         let mut comments: Vec<_> = self
@@ -338,7 +446,7 @@ pub fn load(root: &Path, source: Source) -> Result<Document, String> {
         }
         Source::File(ref path) => {
             let path = workspace::checked(root, path)?;
-            let content = fs::read_to_string(path).map_err(error)?;
+            let content = fs::read_to_string(&path).map_err(error)?;
             doc.lines = content.lines().map(str::to_owned).collect();
             let mut group = "常规".to_owned();
             for (i, line) in doc.lines.iter().enumerate() {
@@ -385,7 +493,7 @@ pub fn load(root: &Path, source: Source) -> Result<Document, String> {
                         )
                     };
                 doc.fields.push(Field {
-                    label: label(&key),
+                    label: mod_label(&path, &key),
                     key,
                     group: group.clone(),
                     value,
@@ -616,6 +724,42 @@ pub fn ini_text(value: &Value) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn builtin_cfg_labels_are_chinese_but_saved_keys_stay_original() {
+        let root = tempfile::tempdir().unwrap();
+        for (file, content, expected) in [
+            (
+                "BML.cfg",
+                "HUD {\n # FPS counter update frequency in frames\n I FPSUpdateFrequency 30\n}\n",
+                "帧率刷新间隔",
+            ),
+            (
+                "CameraUtilities.cfg",
+                "Camera {\n B Enable 0\n}\n",
+                "启用相机工具",
+            ),
+            (
+                "DebugUtilities.cfg",
+                "Debug {\n K TurnPaper 23\n}\n",
+                "变成纸球",
+            ),
+        ] {
+            let path = root.path().join(file);
+            fs::write(&path, content).unwrap();
+            let mut doc = load(root.path(), Source::File(path.clone())).unwrap();
+            assert_eq!(doc.fields[0].label, expected);
+            doc.fields[0].value = "1".into();
+            doc.dirty = true;
+            doc.save(root.path()).unwrap();
+            let written = fs::read_to_string(path).unwrap();
+            assert!(written.contains(&doc.fields[0].key));
+            assert!(!written.contains(expected));
+        }
+        let path = root.path().join("ThirdParty.cfg");
+        fs::write(&path, "General {\n B Enable 0\n}\n").unwrap();
+        let doc = load(root.path(), Source::File(path)).unwrap();
+        assert_eq!(doc.fields[0].label, "Enable");
+    }
     #[test]
     fn editing_one_level_preserves_other_level_rankings() {
         let fixture = game_fixture();

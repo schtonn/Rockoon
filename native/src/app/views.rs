@@ -64,7 +64,7 @@ fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Messa
     };
     button(content)
         .padding([8, 12])
-        .style(style::quiet)
+        .style(style::secondary)
         .on_press_maybe(enabled.then_some(message))
         .into()
 }
@@ -133,13 +133,12 @@ impl App {
                 Page::Home => unreachable!(),
             };
             let tabs = self.section_tabs();
-            let body = if self.detached_tas
-                || !matches!(self.page.section(), Page::Maps | Page::Config | Page::Tasks)
-            {
-                body
-            } else {
-                column![tabs, body].spacing(16).height(Fill).into()
-            };
+            let body =
+                if self.detached_tas || !matches!(self.page.section(), Page::Maps | Page::Config) {
+                    body
+                } else {
+                    column![tabs, body].spacing(16).height(Fill).into()
+                };
             container(column![header, body].spacing(20).height(Fill))
                 .padding(24)
                 .width(Fill)
@@ -183,6 +182,45 @@ impl App {
         } else {
             base
         };
+        if let Some((job, name)) = self
+            .jobs
+            .iter()
+            .find_map(|job| job.progress().sky_prompt.map(|name| (job, name)))
+        {
+            let mut body = column![
+                text("导入天空盒").size(19),
+                text(name).size(14),
+                row![
+                    text("替换哪一关的天空？").size(14),
+                    space::horizontal(),
+                    self.sky_picker()
+                ]
+                .align_y(Alignment::Center),
+            ]
+            .spacing(16)
+            .width(430);
+            if matches!(self.sky.as_str(), "第 4 关" | "第 13 关") {
+                body = body.push(text("第 4 关和第 13 关共用同一片天空，会一起更换。").size(14));
+            }
+            body = body.push(
+                row![
+                    space::horizontal(),
+                    action("取消", Message::SkyDecision(job.id.clone(), false), true),
+                    action("导入", Message::SkyDecision(job.id.clone(), true), true),
+                ]
+                .spacing(8),
+            );
+            return stack![
+                base,
+                opaque(
+                    container(container(body).padding(24).style(style::menu))
+                        .center_x(Fill)
+                        .center_y(Fill)
+                        .style(style::shade)
+                )
+            ]
+            .into();
+        }
         if let Some(prompt) = &self.prompt {
             let mut body = column![text(&prompt.title).size(19)].spacing(18).width(420);
             if matches!(
@@ -331,7 +369,9 @@ impl App {
                     ..iced::Font::with_name("Source Han Sans CN")
                 }),
         )
-        .on_press(Message::Page(if self.page.section() == page.section() {
+        .on_press(Message::Page(if page == Page::Home {
+            Page::Home
+        } else if self.page.section() == page.section() {
             self.page
         } else if page == Page::Maps {
             Page::Hub
@@ -346,7 +386,7 @@ impl App {
     fn section_tabs(&self) -> Element<'_, Message> {
         if self.page.section() == Page::Maps {
             let online = self.page == Page::Hub;
-            let mut tabs = row![
+            let source = row![
                 button(text("在线").size(14))
                     .padding([7, 12])
                     .style(style::tab(online))
@@ -355,10 +395,12 @@ impl App {
                     .padding([7, 12])
                     .style(style::tab(!online))
                     .on_press(Message::ResourceSource(false)),
-                space().width(12),
             ]
-            .spacing(6)
+            .spacing(2)
             .align_y(Alignment::Center);
+            let mut tabs = row![container(source).padding(3).style(style::menu)]
+                .spacing(16)
+                .align_y(Alignment::Center);
             tabs = tabs.push(pick_list(
                 crate::hub::Category::ALL.to_vec(),
                 Some(if online {
@@ -384,7 +426,7 @@ impl App {
         }
         let pages: &[Page] = match self.page.section() {
             Page::Config => &[Page::Config, Page::Data, Page::Profiles],
-            Page::Tasks => &[Page::Tasks, Page::Install],
+
             _ => &[],
         };
         let mut tabs = row![].spacing(6);
@@ -394,7 +436,7 @@ impl App {
                     text(crate::l10n::text(if page == Page::Config {
                         "参数"
                     } else if page == Page::Profiles {
-                        "配置预设"
+                        "已保存的设置"
                     } else {
                         page.label()
                     }))
@@ -405,7 +447,11 @@ impl App {
                 .on_press(Message::Page(page)),
             );
         }
-        tabs.into()
+        if pages.is_empty() {
+            space().into()
+        } else {
+            container(tabs).padding(3).style(style::menu).into()
+        }
     }
     fn header(&self) -> Element<'_, Message> {
         if self.instance.is_none() {
@@ -449,32 +495,41 @@ impl App {
         } else {
             style::quiet
         })
-        .on_press(Message::FolderMenu);
-        let panel = if self.folder_menu {
-            let mut menu = column![].spacing(3).width(156);
-            if let Some(root) = self.root() {
-                menu = menu.push(menu_action("打开目录", Message::Open(root), true));
-            }
-            menu = menu.push(menu_action(
-                "更换目录",
-                Message::PickFolder,
-                !self.locked() && !self.picking_folder,
-            ));
-            Some(menu_panel(menu).into())
-        } else {
-            None
-        };
-        let folder = crate::popup::menu(trigger, panel, false);
-        let actions = row![
-            folder,
-            text(path).size(14).color(if self.page == Page::Home {
-                iced::Color::WHITE
+        .on_press_maybe((!self.locked() && !self.picking_folder).then_some(Message::PickFolder));
+        let path = button(text(path).size(14))
+            .padding([7, 0])
+            .style(if self.page == Page::Home {
+                style::sky_button
             } else {
-                style::colors(&self.theme()).text
+                style::quiet
             })
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+            .on_press_maybe(self.root().map(Message::Open));
+        let folder_row = row![trigger, path].spacing(8).align_y(Alignment::Center);
+        let mut actions = column![folder_row].spacing(4).align_x(Alignment::Start);
+        if matches!(self.page, Page::Home | Page::Install) {
+            let home = self.page == Page::Home;
+            actions = actions.push(
+                button(
+                    text(if home {
+                        "游戏与组件"
+                    } else {
+                        "返回 Ballance"
+                    })
+                    .size(14),
+                )
+                .padding([7, 9])
+                .style(if home {
+                    style::sky_button
+                } else {
+                    style::secondary
+                })
+                .on_press(Message::Page(if home {
+                    Page::Install
+                } else {
+                    Page::Home
+                })),
+            );
+        }
         let mut header = row![].align_y(Alignment::Center);
         if self.page != Page::Home {
             header = header.push(text(crate::l10n::text(self.page.section_label())).size(22));
@@ -771,19 +826,6 @@ impl App {
                         .width(Fill),
                     action("安装支持", Message::Page(Page::Install), !self.locked()),
                 ]
-                .align_y(Alignment::Center),
-            );
-        }
-        if scope == Some(Kind::Skies) {
-            body = body.push(
-                row![
-                    crate::hint::label(
-                        "天空盒应用到",
-                        "选择要替换天空背景的关卡，自制地图使用 X。"
-                    ),
-                    self.sky_picker()
-                ]
-                .spacing(12)
                 .align_y(Alignment::Center),
             );
         }
@@ -1339,12 +1381,9 @@ impl App {
             return self.empty();
         }
         let mut list = column![
-            crate::hint::label(
-                "配置预设",
-                "保存游戏设置、模组配置和启停状态，方便切换不同玩法。"
-            ),
+            text("保存当前设置和模组启停状态，之后可以一键切换。").size(14),
             action(
-                "保存为新预设",
+                "保存当前设置",
                 Message::Prompt(PromptKind::CreateProfile),
                 !self.locked()
             )
@@ -1428,7 +1467,7 @@ impl App {
                 button(text(selected).size(14))
                     .width(CONTROL_WIDTH)
                     .padding(6)
-                    .style(style::quiet)
+                    .style(style::secondary)
                     .on_press_maybe((!self.busy).then_some(Message::Versions(index))),
                 versions,
                 true
@@ -1448,12 +1487,18 @@ impl App {
         .into()
     }
     fn install(&self) -> Element<'_, Message> {
-        let mut content = column![crate::hint::label(
-            "当前游戏组件",
-            "NewPlayer 提供兼容修复，BML+ 提供地图和模组支持。"
-        ),]
-        .spacing(8);
+        let mut content = column![text("游戏与组件").size(16)].spacing(8);
         if self.instance.is_some() {
+            if self.busy {
+                content = content.push(
+                    container(text("读取组件列表…").size(14))
+                        .height(ROW_HEIGHT)
+                        .center_y(ROW_HEIGHT),
+                );
+            }
+            if !self.busy && self.patches.is_empty() {
+                content = content.push(action("重新读取组件", Message::Refresh, true));
+            }
             for key in ["player-vc6", "bmlplus"] {
                 if let Some((i, _)) = self.patches.iter().enumerate().find(|(_, p)| p.key == key) {
                     content = content.push(self.patch_row(
@@ -1535,7 +1580,6 @@ impl App {
             .into()
     }
     fn tasks(&self) -> Element<'_, Message> {
-        let import_options = self.section_open("导入选项", false);
         let mut list = column![
             row![
                 text_input("资源包 HTTPS 地址或 rockoon:// 链接", &self.import_url)
@@ -1550,29 +1594,12 @@ impl App {
             .spacing(10)
             .align_y(Alignment::Center),
             row![
-                self.config_heading("导入选项", "导入选项", import_options),
                 space::horizontal(),
                 action("清理已完成", Message::ClearJobs, true)
             ]
             .align_y(Alignment::Center)
         ]
         .spacing(8);
-        if import_options {
-            list = list.push(config_branch(
-                column![
-                    row![
-                        crate::hint::label(
-                            "天空盒应用到",
-                            "这个选项只在导入天空盒时决定替换哪一关的背景。"
-                        ),
-                        self.sky_picker()
-                    ]
-                    .spacing(10)
-                    .align_y(Alignment::Center)
-                ]
-                .into(),
-            ));
-        }
         if self.jobs.is_empty() {
             list = list.push(
                 text("在线资源安装和文件下载的进度会显示在这里，也可以在上方粘贴资源包链接。")
@@ -1716,22 +1743,24 @@ impl App {
                     .into()
             ),
             self.preference_row(
-                "启用 TAS 编辑器",
-                "TAS 编辑器用于逐帧编辑和回放游戏输入。",
-                toggle(prefs.enable_tas, "tas")
+                "TAS 编辑器",
+                "逐帧编辑和回放游戏输入。",
+                action("打开编辑器", Message::OpenTas, true)
             ),
         ]
         .spacing(0);
-        if prefs.enable_tas {
-            content = content.push(action("打开 TAS 编辑器", Message::OpenTas, true));
-        }
         content = content.push(rule::horizontal(1)).push(
-            text(format!(
-                "累计游玩 {} 小时 {} 分钟",
-                prefs.playtime / 3600,
-                prefs.playtime % 3600 / 60
-            ))
-            .size(14),
+            self.preference_row(
+                "累计游玩",
+                "",
+                text(format!(
+                    "{} 小时 {} 分钟",
+                    prefs.playtime / 3600,
+                    prefs.playtime % 3600 / 60
+                ))
+                .size(14)
+                .into(),
+            ),
         );
         if let Some(last) = prefs.last_played {
             let elapsed = std::time::SystemTime::now()
@@ -1742,25 +1771,34 @@ impl App {
             let activity = if prefs.language == "en" {
                 format!("Last played {} minutes ago", elapsed / 60)
             } else if elapsed < 3600 {
-                format!("最近游玩：{} 分钟前", elapsed / 60)
+                format!("{} 分钟前", elapsed / 60)
             } else if elapsed < 86400 {
-                format!("最近游玩：{} 小时前", elapsed / 3600)
+                format!("{} 小时前", elapsed / 3600)
             } else {
-                format!("最近游玩：{} 天前", elapsed / 86400)
+                format!("{} 天前", elapsed / 86400)
             };
-            content = content.push(text(activity).size(14));
+            content =
+                content.push(self.preference_row("最近游玩", "", text(activity).size(14).into()));
         }
-        content = content
-            .push(action("检查更新", Message::CheckUpdate, true))
-            .push(action(
-                if self.protocol_ready {
-                    "重新关联一键安装"
-                } else {
-                    "启用一键安装"
-                },
-                Message::RegisterProtocol,
-                true,
-            ));
+        content = content.push(
+            container(
+                row![
+                    action("检查更新", Message::CheckUpdate, true),
+                    action(
+                        if self.protocol_ready {
+                            "重新关联一键安装"
+                        } else {
+                            "启用一键安装"
+                        },
+                        Message::RegisterProtocol,
+                        true,
+                    )
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 0]),
+        );
         if let Some(release) = &self.update_release {
             content = content
                 .push(text(format!("Rockoon {}", release.version)).size(16))

@@ -282,6 +282,43 @@ pub fn import_files(root: &Path, dir: &Path, kind: Kind, paths: &[PathBuf]) -> R
     }
     replace(root, &changes)
 }
+/// Install selected sky faces with the same backup/atomic replacement as BRP imports.
+pub fn import_sky_files(
+    root: &Path,
+    dir: &Path,
+    paths: &[PathBuf],
+    sky: &str,
+) -> Result<(), String> {
+    idle(root)?;
+    if !matches!(
+        sky,
+        "X" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "L" | "M"
+    ) {
+        return Err("无效的天空盒关卡".into());
+    }
+    let mut changes = Vec::new();
+    let mut names = std::collections::HashSet::new();
+    for path in paths {
+        let name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or("无效文件名")?;
+        let parts: Vec<_> = name.split('_').collect();
+        if parts.len() != 3 || !parts[0].eq_ignore_ascii_case("Sky") {
+            return Err("天空盒文件应使用 Sky_X_Front.bmp 这样的名称".into());
+        }
+        let direction = ["Back", "Down", "Front", "Left", "Right"]
+            .into_iter()
+            .find(|d| parts[2].eq_ignore_ascii_case(&format!("{d}.bmp")))
+            .ok_or("无法识别天空盒方位")?;
+        let target = checked(root, &dir.join(format!("Sky_{sky}_{direction}.bmp")))?;
+        if !names.insert(target.clone()) {
+            return Err("同一方位只能导入一张图片".into());
+        }
+        changes.push((target, fs::read(path).map_err(error)?));
+    }
+    replace(root, &changes)
+}
 pub fn archive_entries(path: &Path, strip: bool) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
     let mut archive = zip::ZipArchive::new(fs::File::open(path).map_err(error)?).map_err(error)?;
     let mut result = Vec::new();

@@ -271,9 +271,6 @@ impl App {
                 if package.patch() {
                     return self.update(Message::Page(Page::Install));
                 }
-                if package.category == "sky" && !from_detail {
-                    return self.catalog_open(id);
-                }
                 let Some(root) = self.root() else {
                     self.notify("选择游戏目录后即可安装资源");
                     return self.update(Message::PickFolder);
@@ -452,8 +449,6 @@ impl App {
             "安装中…"
         } else if package.patch() {
             "管理组件"
-        } else if package.category == "sky" {
-            "选择关卡"
         } else if installed {
             "重新安装"
         } else {
@@ -601,19 +596,6 @@ impl App {
                 message(Action::RetryDetail),
                 true,
             ));
-        }
-        if package.category == "sky" {
-            info = info.push(
-                row![
-                    crate::hint::label(
-                        "天空盒应用到",
-                        "选择要替换天空背景的关卡，自制地图使用 X。"
-                    ),
-                    self.sky_picker()
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
-            );
         }
         if self.root().is_none() {
             info = info.push(text("选择游戏目录后即可安装").size(14));
@@ -779,7 +761,7 @@ fn icon_button<'a>(
 ) -> Element<'a, Message> {
     button(icons::label(icon, label))
         .padding([8, 10])
-        .style(style::quiet)
+        .style(style::secondary)
         .on_press_maybe(enabled.then_some(message))
         .into()
 }

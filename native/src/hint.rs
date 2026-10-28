@@ -25,7 +25,7 @@ pub fn wrap<'a>(
         iced::widget::tooltip::Position::FollowCursor,
     )
     .gap(12)
-    .delay(std::time::Duration::from_millis(300))
+    .delay(std::time::Duration::ZERO)
     .style(crate::style::menu)
     .into()
 }

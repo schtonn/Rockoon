@@ -36,7 +36,7 @@ impl Page {
         match self {
             Self::Hub | Self::Local | Self::Maps | Self::Mods | Self::Assets => Self::Maps,
             Self::Config | Self::Data | Self::Profiles => Self::Config,
-            Self::Install | Self::Tasks => Self::Tasks,
+            Self::Install => Self::Home,
             other => other,
         }
     }
@@ -57,7 +57,7 @@ impl Page {
             Self::Assets => "素材",
             Self::Config => "配置",
             Self::Data => "存档",
-            Self::Profiles => "配置预设",
+            Self::Profiles => "已保存的设置",
             Self::Install => "游戏与组件",
             Self::Tasks => "任务",
             Self::Tas => "TAS",
@@ -114,7 +114,6 @@ pub enum Message {
     Loaded(Result<Instance, String>),
     Rescanned(PathBuf, Result<Instance, String>),
     Page(Page),
-    FolderMenu,
     CloseMenus,
     NoticeTick,
     LatestVersion,
@@ -176,6 +175,7 @@ pub enum Message {
     InstallPicked(Option<PathBuf>),
     InstallChoice(bool, bool),
     Sky(String),
+    SkyDecision(String, bool),
     JobFinished(String, Result<String, String>),
     CancelJob(String),
     RetryJob(String),
@@ -280,7 +280,6 @@ pub struct App {
     update_release: Option<crate::updates::Release>,
     update_path: Option<PathBuf>,
     page: Page,
-    folder_menu: bool,
     setup_problem: Option<String>,
     protocol_ready: bool,
     opening_hub: bool,
@@ -357,7 +356,6 @@ impl App {
             update_release: None,
             update_path: None,
             page: Page::Home,
-            folder_menu: std::env::args().any(|a| a == "--folder-menu"),
             setup_problem: None,
             protocol_ready: false,
             opening_hub: false,
@@ -495,7 +493,6 @@ impl App {
         self.notice = Some(Notice::new(message, Duration::from_secs(5)));
     }
     fn close_menus(&mut self) {
-        self.folder_menu = false;
         self.entry_menu = None;
         self.version_menu = None;
     }
@@ -760,7 +757,6 @@ impl App {
                         Message::PickFolder,
                     ))));
                 }
-                self.folder_menu = false;
                 self.picking_folder = true;
                 let initial = self.root();
                 return Task::perform(
@@ -822,11 +818,6 @@ impl App {
                     }
                 }
             }
-            Message::FolderMenu => {
-                let open = !self.folder_menu;
-                self.close_menus();
-                self.folder_menu = open;
-            }
             Message::Page(page) => {
                 if page == self.page {
                     return Task::none();
@@ -847,7 +838,6 @@ impl App {
                 if let Some(kind) = self.kind() {
                     self.local_category = crate::hub::Category::from_kind(kind);
                 }
-                self.folder_menu = false;
                 self.search.clear();
                 self.directory = PathBuf::new();
                 self.document = None;
@@ -870,7 +860,6 @@ impl App {
                 return self.reload();
             }
             Message::Open(path) => {
-                self.folder_menu = false;
                 return Task::perform(
                     background(move || game::open_folder(&path)),
                     Message::Opened,
@@ -1003,6 +992,13 @@ impl App {
                         self.error("请在对应资源页导入单个文件");
                         return Task::none();
                     };
+                    if kind == Kind::Skies {
+                        return self.start_job(Request::SkyFiles {
+                            root,
+                            dir,
+                            files: raw,
+                        });
+                    }
                     return self.change(move || {
                         workspace::import_files(&root, &dir, kind, &raw)?;
                         Ok("已导入".into())
@@ -1082,9 +1078,9 @@ impl App {
                             .to_string_lossy()
                             .to_string(),
                     ),
-                    PromptKind::CreateProfile => ("新建配置预设", String::new()),
-                    PromptKind::RenameProfile(_) => ("重命名配置预设", String::new()),
-                    PromptKind::DeleteProfile(_) => ("删除配置预设？", String::new()),
+                    PromptKind::CreateProfile => ("保存当前设置", String::new()),
+                    PromptKind::RenameProfile(_) => ("重命名", String::new()),
+                    PromptKind::DeleteProfile(_) => ("删除这份设置？", String::new()),
                     PromptKind::Restore => {
                         ("恢复原版关卡文件？现有文件会保留备份。", String::new())
                     }
@@ -1418,7 +1414,7 @@ impl App {
                 if let Some(root) = self.root() {
                     return self.change(move || {
                         profiles::change(&root, action)?;
-                        Ok("已更新配置预设".into())
+                        Ok("已更新已保存的设置".into())
                     });
                 }
             }
@@ -1497,6 +1493,19 @@ impl App {
                 self.install_bmlplus = bmlplus;
             }
             Message::Sky(sky) => self.sky = sky,
+            Message::SkyDecision(id, accept) => {
+                if let Some(job) = self
+                    .jobs
+                    .iter()
+                    .find(|j| j.id == id && j.progress().sky_prompt.is_some())
+                {
+                    if accept {
+                        job.choose_sky(self.sky_letter());
+                    } else {
+                        job.cancel();
+                    }
+                }
+            }
             Message::JobFinished(id, result) => {
                 self.finished_jobs.insert(id.clone());
                 if result.is_ok()
