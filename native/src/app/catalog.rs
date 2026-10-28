@@ -169,6 +169,9 @@ impl App {
             }
             Action::Submit => return self.fetch_catalog(true),
             Action::Category(category) => {
+                self.hub.selected = None;
+                self.hub.detail_generation += 1;
+                self.hub.detail_loading = false;
                 self.hub.query.category = category;
                 self.hub.query.page = 0;
                 return self.fetch_catalog(true);
@@ -332,11 +335,8 @@ impl App {
             .on_input(|s| message(Action::Search(s)))
             .on_submit(message(Action::Submit));
         let toolbar = row![
-            icons::view(Icon::Search, 18.0),
+            icons::view(Icon::Search, 16.0),
             search,
-            picker(hub::Category::ALL.to_vec(), self.hub.query.category, |v| {
-                message(Action::Category(v))
-            }),
             picker(hub::Sort::ALL.to_vec(), self.hub.query.sort, |v| message(
                 Action::Sort(v)
             )),
@@ -799,6 +799,22 @@ fn category_label(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn category_filter_leaves_old_details_and_invalidates_pending_detail_response() {
+        let (mut app, _) = App::new();
+        app.hub.selected = Some(hub::Package {
+            id: 123,
+            category: "map".into(),
+            ..Default::default()
+        });
+        app.hub.detail_loading = true;
+        let previous = app.hub.detail_generation;
+        let _ = app.update_catalog(Action::Category(hub::Category::Sky));
+        assert!(app.hub.selected.is_none());
+        assert!(!app.hub.detail_loading);
+        assert!(app.hub.detail_generation > previous);
+        assert_eq!(app.hub.query.category, hub::Category::Sky);
+    }
     #[test]
     fn stale_search_results_do_not_replace_the_new_query() {
         let (mut app, _) = App::new();

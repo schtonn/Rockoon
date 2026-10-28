@@ -11,6 +11,20 @@ fn text_input<'a>(placeholder: &str, value: &str) -> iced::widget::TextInput<'a,
         .padding(9)
         .style(style::input)
 }
+fn search_input<'a>(
+    placeholder: &str,
+    value: &str,
+    changed: impl Fn(String) -> Message + 'a,
+) -> Element<'a, Message> {
+    row![
+        crate::icons::view(crate::icons::Icon::Search, 16.0),
+        text_input(placeholder, value).on_input(changed).width(Fill)
+    ]
+    .spacing(9)
+    .align_y(Alignment::Center)
+    .width(Fill)
+    .into()
+}
 fn checkbox<'a>(checked: bool) -> iced::widget::Checkbox<'a, Message> {
     iced::widget::checkbox(checked)
         .size(18)
@@ -63,6 +77,19 @@ fn menu_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, 
         .style(style::quiet)
         .on_press_maybe(enabled.then_some(message))
         .into()
+}
+fn config_branch<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+    container(
+        row![
+            rule::vertical(1),
+            container(content)
+                .padding(iced::Padding::ZERO.left(14))
+                .width(Fill)
+        ]
+        .height(iced::Shrink),
+    )
+    .padding(iced::Padding::ZERO.left(9).bottom(4))
+    .into()
 }
 fn menu_panel<'a>(
     content: impl Into<Element<'a, Message>>,
@@ -293,35 +320,13 @@ impl App {
         base
     }
     fn nav(&self, page: Page) -> Element<'_, Message> {
-        let glyph: Element<'_, Message> = if page == Page::Home {
-            self.instance
-                .as_ref()
-                .and_then(|i| i.visuals.menu_ball.as_ref())
-                .map(|ball| image(ball.clone()).width(19).height(19).into())
-                .unwrap_or_else(|| crate::icons::view(crate::icons::Icon::Ball, 18.0))
-        } else {
-            crate::icons::view(
-                match page {
-                    Page::Maps => crate::icons::Icon::Library,
-                    Page::Config => crate::icons::Icon::Sliders,
-                    Page::Tasks => crate::icons::Icon::Download,
-                    _ => crate::icons::Icon::Settings,
-                },
-                18.0,
-            )
-        };
         button(
-            row![
-                glyph,
-                text(crate::l10n::text(page.section_label()))
-                    .size(15)
-                    .font(iced::Font {
-                        weight: iced::font::Weight::Medium,
-                        ..iced::Font::with_name("Source Han Sans CN")
-                    })
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
+            text(crate::l10n::text(page.section_label()))
+                .size(15)
+                .font(iced::Font {
+                    weight: iced::font::Weight::Medium,
+                    ..iced::Font::with_name("Source Han Sans CN")
+                }),
         )
         .on_press(Message::Page(if self.page.section() == page.section() {
             self.page
@@ -336,43 +341,76 @@ impl App {
         .into()
     }
     fn section_tabs(&self) -> Element<'_, Message> {
+        if self.page.section() == Page::Maps {
+            let online = self.page == Page::Hub;
+            let mut tabs = row![
+                button(text("在线").size(14))
+                    .padding([7, 12])
+                    .style(style::tab(online))
+                    .on_press(Message::ResourceSource(true)),
+                button(text("本地").size(14))
+                    .padding([7, 12])
+                    .style(style::tab(!online))
+                    .on_press(Message::ResourceSource(false)),
+                space().width(12),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center);
+            if online {
+                tabs = tabs.push(pick_list(
+                    crate::hub::Category::ALL.to_vec(),
+                    Some(self.hub.query.category),
+                    |category| Message::Hub(super::catalog::Action::Category(category)),
+                ));
+            } else {
+                tabs = tabs.push(pick_list(
+                    vec![
+                        Kind::Maps,
+                        Kind::Mods,
+                        Kind::Skies,
+                        Kind::Textures,
+                        Kind::Sounds,
+                    ],
+                    Some(self.kind().unwrap_or(self.local_kind)),
+                    Message::ResourceKind,
+                ));
+            }
+            return tabs
+                .push(space::horizontal())
+                .push(action(
+                    if self.opening_hub {
+                        "正在连接…"
+                    } else {
+                        "社区资源站"
+                    },
+                    Message::OpenHub,
+                    !self.opening_hub,
+                ))
+                .width(Fill)
+                .into();
+        }
         let pages: &[Page] = match self.page.section() {
-            Page::Maps => &[Page::Hub, Page::Maps, Page::Mods, Page::Assets],
             Page::Config => &[Page::Config, Page::Data, Page::Profiles],
             Page::Tasks => &[Page::Tasks, Page::Install],
             _ => &[],
         };
-        if pages.is_empty() {
-            return space().height(0).into();
-        }
         let mut tabs = row![].spacing(6);
         for &page in pages {
-            let label = match page {
-                Page::Config => "参数",
-                Page::Maps => "本地地图",
-                Page::Mods => "本地模组",
-                Page::Assets => "本地素材",
-                _ => page.label(),
-            };
             tabs = tabs.push(
-                button(text(crate::l10n::text(label)).size(14))
-                    .padding([7, 12])
-                    .style(style::tab(self.page == page))
-                    .on_press(Message::Page(page)),
+                button(
+                    text(crate::l10n::text(if page == Page::Config {
+                        "参数"
+                    } else {
+                        page.label()
+                    }))
+                    .size(14),
+                )
+                .padding([7, 12])
+                .style(style::tab(self.page == page))
+                .on_press(Message::Page(page)),
             );
         }
-        if self.page.section() == Page::Maps {
-            tabs = tabs.push(space::horizontal()).push(action(
-                if self.opening_hub {
-                    "正在连接…"
-                } else {
-                    "社区资源站"
-                },
-                Message::OpenHub,
-                !self.opening_hub,
-            ));
-        }
-        tabs.width(Fill).into()
+        tabs.into()
     }
     fn header(&self) -> Element<'_, Message> {
         if self.instance.is_none() {
@@ -557,54 +595,30 @@ impl App {
         let Some(kind) = self.kind() else {
             return self.empty();
         };
-        let mut toolbar = row![].spacing(8).align_y(Alignment::Center);
-        if self.page == Page::Assets {
-            toolbar = toolbar.push(
-                pick_list(
-                    vec![Kind::Skies, Kind::Textures, Kind::Sounds],
-                    Some(kind),
-                    Message::AssetKind,
-                )
-                .text_size(14),
-            );
-        }
-        toolbar = toolbar
-            .push(
-                text_input("搜索", &self.search)
-                    .on_input(Message::Search)
-                    .padding(9)
-                    .width(Fill),
-            )
-            .push(action("导入", Message::Import, !self.locked()))
-            .push(action(
-                "新建文件夹",
-                Message::Prompt(PromptKind::NewFolder),
-                !self.locked(),
-            ))
-            .push(action("刷新", Message::Refresh, !self.busy));
-        let mut crumbs = row![].spacing(4);
-        crumbs = crumbs.push(action(
-            "根目录",
-            Message::Browse(root.join(kind.dir())),
-            !self.busy,
-        ));
+        let toolbar = row![
+            search_input("搜索", &self.search, Message::Search),
+            action("导入", Message::Import, !self.locked()),
+            action("刷新", Message::Refresh, !self.busy)
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
         let base = root.join(kind.dir());
-        let mut path = base.clone();
-        if let Ok(relative) = self.directory.strip_prefix(&base) {
-            for part in relative.components() {
-                path.push(part);
-                crumbs = crumbs.push(text(crate::l10n::text("/")).size(14)).push(
-                    button(text(part.as_os_str().to_string_lossy().to_string()).size(14))
-                        .style(style::quiet)
-                        .on_press(Message::Browse(path.clone())),
-                );
+        let mut crumbs = row![].spacing(4).align_y(Alignment::Center);
+        let nested = self.directory != base;
+        if nested {
+            crumbs = crumbs.push(action("根目录", Message::Browse(base.clone()), !self.busy));
+            let mut path = base.clone();
+            if let Ok(relative) = self.directory.strip_prefix(&base) {
+                for part in relative.components() {
+                    path.push(part);
+                    crumbs = crumbs.push(text("/").size(14)).push(
+                        button(text(part.as_os_str().to_string_lossy().to_string()).size(14))
+                            .style(style::quiet)
+                            .on_press(Message::Browse(path.clone())),
+                    );
+                }
             }
         }
-        crumbs = crumbs.push(space::horizontal()).push(action(
-            "打开文件夹",
-            Message::Open(self.directory.clone()),
-            true,
-        ));
         if self.deleted.is_some() {
             crumbs = crumbs.push(action("撤销删除", Message::UndoDelete, !self.locked()));
         }
@@ -656,6 +670,15 @@ impl App {
                 }
                 menu = menu
                     .push(menu_action(
+                        "打开文件夹",
+                        Message::Open(if entry.directory {
+                            entry.path.clone()
+                        } else {
+                            self.directory.clone()
+                        }),
+                        true,
+                    ))
+                    .push(menu_action(
                         "重命名",
                         Message::Prompt(PromptKind::Rename(entry.path.clone())),
                         !self.locked(),
@@ -674,14 +697,6 @@ impl App {
             } else {
                 None
             };
-            let more = crate::popup::menu(
-                button(iced::widget::canvas(MoreIcon).width(18).height(14))
-                    .padding([7, 7])
-                    .style(style::quiet)
-                    .on_press(Message::EntryMenu(entry.path.clone())),
-                panel,
-                true,
-            );
             let glyph = if entry.directory {
                 crate::icons::Icon::Folder
             } else {
@@ -694,13 +709,26 @@ impl App {
             };
             let line = row![
                 crate::icons::view(glyph, 18.0),
-                text(&entry.name).size(14).width(Fill),
-                primary,
-                more
+                iced::widget::mouse_area(container(text(&entry.name).size(14)).width(Fill))
+                    .on_double_click(if entry.directory {
+                        Message::Browse(entry.path.clone())
+                    } else {
+                        match kind {
+                            Kind::Maps => Message::Launch(Some(entry.path.clone())),
+                            Kind::Mods => Message::FindConfig(entry.path.clone()),
+                            Kind::Skies | Kind::Textures => Message::Preview(entry.path.clone()),
+                            Kind::Sounds => Message::Sound(entry.path.clone()),
+                        }
+                    }),
+                primary
             ]
             .spacing(8)
             .align_y(Alignment::Center);
-            list = list.push(container(line).padding([8, 0]));
+            list = list.push(crate::popup::context(
+                container(line).padding([5, 0]).width(Fill),
+                panel,
+                Message::EntryMenu(entry.path.clone()),
+            ));
             list = list.push(rule::horizontal(1));
         }
         let visible = self
@@ -729,7 +757,10 @@ impl App {
             }
             list = list.push(container(empty).padding([24, 0]));
         }
-        let mut body = column![toolbar, crumbs].spacing(12);
+        let mut body = column![toolbar].spacing(10);
+        if nested || self.deleted.is_some() || self.sound.is_some() {
+            body = body.push(crumbs);
+        }
         if matches!(kind, Kind::Maps | Kind::Mods)
             && !root.join("BuildingBlocks/BML.dll").is_file()
             && !root.join("BuildingBlocks/BMLPlus.dll").is_file()
@@ -754,13 +785,36 @@ impl App {
                 .align_y(Alignment::Center),
             );
         }
-        body.push(
-            scrollable(container(list).padding(iced::Padding {
-                right: 16.0,
-                ..iced::Padding::ZERO
-            }))
+        let panel = if self.entry_menu.as_ref() == Some(&self.directory) {
+            Some(
+                menu_panel(
+                    column![
+                        menu_action("导入", Message::Import, !self.locked()),
+                        menu_action(
+                            "新建文件夹",
+                            Message::Prompt(PromptKind::NewFolder),
+                            !self.locked()
+                        ),
+                        menu_action("打开文件夹", Message::Open(self.directory.clone()), true),
+                        menu_action("刷新", Message::Refresh, !self.busy),
+                    ]
+                    .width(170),
+                )
+                .into(),
+            )
+        } else {
+            None
+        };
+        body.push(crate::popup::context(
+            scrollable(
+                container(list)
+                    .padding(iced::Padding::ZERO.right(12))
+                    .width(Fill),
+            )
             .height(Fill),
-        )
+            panel,
+            Message::EntryMenu(self.directory.clone()),
+        ))
         .height(Fill)
         .into()
     }
@@ -831,7 +885,8 @@ impl App {
                     i,
                     key.id.to_string()
                 ))
-                .width(130),
+                .padding(5)
+                .width(114),
             ]
             .spacing(12)
             .align_y(Alignment::Center)
@@ -841,13 +896,118 @@ impl App {
                 text(crate::l10n::text(&field.label)).size(14).width(Fill),
                 text_input("", &field.value)
                     .on_input(move |s| Message::Field(i, s))
-                    .padding(8)
+                    .padding(5)
                     .width(180),
             ]
             .spacing(24)
             .align_y(Alignment::Center)
             .into()
         }
+    }
+    fn section_open(&self, id: &str, default: bool) -> bool {
+        self.config_sections
+            .get(&format!("{}:{id}", self.config_name))
+            .copied()
+            .unwrap_or(default)
+    }
+    fn config_heading<'a>(&self, label: &str, id: &str, open: bool) -> Element<'a, Message> {
+        button(
+            row![
+                crate::icons::view(
+                    if open {
+                        crate::icons::Icon::Down
+                    } else {
+                        crate::icons::Icon::Right
+                    },
+                    12.0
+                ),
+                text(crate::l10n::text(label).to_owned())
+                    .size(14)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Medium,
+                        ..iced::Font::with_name("Source Han Sans CN")
+                    })
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([6, 3])
+        .width(Fill)
+        .style(style::quiet)
+        .on_press(Message::ConfigSection(id.to_owned()))
+        .into()
+    }
+    fn configuration_rows<'a>(
+        &'a self,
+        fields: &[(usize, &'a config::Field)],
+    ) -> Element<'a, Message> {
+        let game = self
+            .document
+            .as_ref()
+            .is_some_and(|d| d.source == Source::Game);
+        let mut content = column![].spacing(2);
+        let mut paired = Vec::new();
+        let width = fields.iter().find(|(_, f)| f.key == "Width").copied();
+        let height = fields.iter().find(|(_, f)| f.key == "Height").copied();
+        for &(i, field) in fields {
+            if game && (field.boolean || field.key.starts_with("/key")) {
+                paired.push((i, field));
+            } else if game
+                && width.is_some()
+                && height.is_some()
+                && matches!(field.key.as_str(), "Width" | "Height")
+            {
+                if field.key == "Width" {
+                    let (hi, h) = height.unwrap();
+                    content = content.push(
+                        container(
+                            row![
+                                text("分辨率").size(14).width(Fill),
+                                text_input("", &field.value)
+                                    .on_input(move |v| Message::Field(i, v))
+                                    .padding(5)
+                                    .width(80),
+                                text("×").size(14),
+                                text_input("", &h.value)
+                                    .on_input(move |v| Message::Field(hi, v))
+                                    .padding(5)
+                                    .width(80)
+                            ]
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                        )
+                        .padding([3, 0]),
+                    );
+                }
+            } else {
+                content =
+                    content.push(container(self.configuration_field(i, field)).padding([3, 0]));
+            }
+        }
+        paired.sort_by_key(|(_, field)| {
+            [
+                "/keyForward",
+                "/keyBackward",
+                "/keyLeft",
+                "/keyRight",
+                "/keyRotateCam",
+                "/keyLiftCam",
+            ]
+            .iter()
+            .position(|key| *key == field.key)
+            .unwrap_or(usize::MAX)
+        });
+        for pair in paired.chunks(2) {
+            let mut line = row![].spacing(24);
+            for &(i, field) in pair {
+                line = line.push(container(self.configuration_field(i, field)).width(Fill));
+            }
+            if pair.len() == 1 {
+                line = line.push(space::horizontal());
+            }
+            content = content.push(container(line).padding([4, 0]));
+        }
+        content.into()
     }
     fn configuration(&self) -> Element<'_, Message> {
         let Some(root) = self.root() else {
@@ -892,11 +1052,7 @@ impl App {
             ));
         }
         toolbar = toolbar
-            .push(
-                text_input("搜索配置", &self.search)
-                    .on_input(Message::Search)
-                    .width(Fill),
-            )
+            .push(search_input("搜索配置", &self.search, Message::Search))
             .push(action(
                 if doc.dirty { "保存修改" } else { "保存" },
                 Message::SaveDocument,
@@ -917,7 +1073,7 @@ impl App {
                 ));
         }
         let searching = !self.search.trim().is_empty();
-        let mut sections = column![].spacing(10);
+        let mut sections = column![].spacing(4);
         let mut shown = 0;
         for group in &groups {
             if self.page == Page::Data && *group != self.group {
@@ -929,7 +1085,8 @@ impl App {
                 .enumerate()
                 .filter(|(_, field)| {
                     field.group == *group
-                        && (workspace::matches(&field.label, &self.search)
+                        && (searching && workspace::matches(group, &self.search)
+                            || workspace::matches(&field.label, &self.search)
                             || workspace::matches(&field.key, &self.search))
                 })
                 .collect();
@@ -939,110 +1096,48 @@ impl App {
             shown += fields.len();
             let open = self.page == Page::Data
                 || searching
-                || self
-                    .config_sections
-                    .get(&format!("{}:{group}", self.config_name))
-                    .copied()
-                    .unwrap_or(!matches!(group.as_str(), "键位与相机" | "高级"));
-            let mut section = column![].spacing(4);
+                || self.section_open(group, !matches!(group.as_str(), "键位与相机" | "高级"));
+            let mut section = column![].spacing(3);
             if self.page == Page::Config {
-                section = section.push(
-                    button(
-                        row![
-                            text(if open { "⌄" } else { "›" }).size(16).width(16),
-                            text(crate::l10n::text(group)).size(14).width(Fill),
-                        ]
-                        .spacing(5)
-                        .align_y(Alignment::Center),
-                    )
-                    .padding([8, 4])
-                    .width(Fill)
-                    .style(style::quiet)
-                    .on_press(Message::ConfigSection(group.clone())),
-                );
+                section = section.push(self.config_heading(group, group, open));
             }
             if open {
-                let mut keys = Vec::new();
-                let mut toggles = Vec::new();
-                let resolution = (doc.source == Source::Game).then(|| {
-                    (
-                        fields.iter().find(|(_, f)| f.key == "Width").copied(),
-                        fields.iter().find(|(_, f)| f.key == "Height").copied(),
-                    )
-                });
-                for (i, field) in fields {
-                    if field.key.starts_with("/key") {
-                        keys.push((i, field));
-                    } else if field.boolean && doc.source == Source::Game {
-                        toggles.push((i, field));
-                    } else if resolution.is_some_and(|(w, h)| w.is_some() && h.is_some())
-                        && matches!(field.key.as_str(), "Width" | "Height")
-                    {
-                        if field.key == "Width" {
-                            let (_, height) = resolution.unwrap();
-                            let (hi, h) = height.unwrap();
-                            section = section.push(
-                                container(
-                                    row![
-                                        text(crate::l10n::text("分辨率")).size(14).width(Fill),
-                                        text_input("", &field.value)
-                                            .on_input(move |v| Message::Field(i, v))
-                                            .padding(8)
-                                            .width(80),
-                                        text("×").size(14),
-                                        text_input("", &h.value)
-                                            .on_input(move |v| Message::Field(hi, v))
-                                            .padding(8)
-                                            .width(80),
-                                    ]
-                                    .spacing(8)
-                                    .align_y(Alignment::Center),
-                                )
-                                .padding([8, 4]),
-                            );
+                let content: Element<'_, Message> =
+                    if doc.source == Source::Game && group == "键位与相机" {
+                        let mut children = column![].spacing(2);
+                        for (name, movement) in [("移动", true), ("相机", false)] {
+                            let subset: Vec<_> = fields
+                                .iter()
+                                .copied()
+                                .filter(|(_, f)| {
+                                    matches!(
+                                        f.key.as_str(),
+                                        "/keyForward" | "/keyBackward" | "/keyLeft" | "/keyRight"
+                                    ) == movement
+                                })
+                                .collect();
+                            if subset.is_empty() {
+                                continue;
+                            }
+                            let id = format!("{group}/{name}");
+                            let expanded = searching || self.section_open(&id, true);
+                            children = children.push(self.config_heading(name, &id, expanded));
+                            if expanded {
+                                children =
+                                    children.push(config_branch(self.configuration_rows(&subset)));
+                            }
                         }
+                        children.into()
                     } else {
-                        section = section
-                            .push(container(self.configuration_field(i, field)).padding([8, 4]));
-                    }
-                }
-                for pair in toggles.chunks(2) {
-                    let mut line = row![].spacing(28);
-                    for (i, field) in pair {
-                        line =
-                            line.push(container(self.configuration_field(*i, field)).width(Fill));
-                    }
-                    if pair.len() == 1 {
-                        line = line.push(space::horizontal());
-                    }
-                    section = section.push(container(line).padding([8, 4]));
-                }
-                keys.sort_by_key(|(_, field)| {
-                    [
-                        "/keyForward",
-                        "/keyBackward",
-                        "/keyLeft",
-                        "/keyRight",
-                        "/keyRotateCam",
-                        "/keyLiftCam",
-                    ]
-                    .iter()
-                    .position(|key| *key == field.key)
-                    .unwrap_or(usize::MAX)
+                        self.configuration_rows(&fields)
+                    };
+                section = section.push(if self.page == Page::Config {
+                    config_branch(content)
+                } else {
+                    content
                 });
-                for pair in keys.chunks(2) {
-                    let mut line = row![].spacing(28);
-                    for (i, field) in pair {
-                        line =
-                            line.push(container(self.configuration_field(*i, field)).width(Fill));
-                    }
-                    if pair.len() == 1 {
-                        line = line.push(space::horizontal());
-                    }
-                    section = section.push(container(line).padding([6, 4]));
-                }
             }
-            sections = sections.push(section).push(rule::horizontal(1));
+            sections = sections.push(section);
         }
         if shown == 0 {
             sections = sections.push(text(crate::l10n::text("没有匹配的配置项")).size(14));
@@ -1637,29 +1732,6 @@ impl App {
         .spacing(12)
         .height(Fill)
         .into()
-    }
-}
-
-struct MoreIcon;
-impl iced::widget::canvas::Program<Message> for MoreIcon {
-    type State = ();
-    fn draw(
-        &self,
-        _: &(),
-        renderer: &iced::Renderer,
-        theme: &iced::Theme,
-        bounds: iced::Rectangle,
-        _: iced::mouse::Cursor,
-    ) -> Vec<iced::widget::canvas::Geometry> {
-        use iced::widget::canvas::{Frame, Path};
-        let mut frame = Frame::new(renderer, bounds.size());
-        for x in [5.0, 9.0, 13.0] {
-            frame.fill(
-                &Path::circle(iced::Point::new(x, bounds.height / 2.0), 1.0),
-                style::colors(theme).text,
-            );
-        }
-        vec![frame.into_geometry()]
     }
 }
 

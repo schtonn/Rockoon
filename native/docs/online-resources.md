@@ -9,7 +9,7 @@ The Resources → Online tab calls the community resource site's public API dire
 - Cover images: trusted `/files/` paths from either resource-site origin, four concurrent requests, 8 MiB download cap, 4096-pixel dimensions and bounded decoded memory. Compressed images are cached for seven days under the launcher's preferences directory. Disk cache is pruned from 128 MiB to 96 MiB; decoded images are limited to 64 entries or 32 MiB. List thumbnails are 512×288 at most; detail previews are 1200×900 at most. A custom image widget clips at the renderer layer because the software renderer does not enforce image-local clip bounds.
 - Primary and backup hosts use the existing origin selection mechanism. API errors and cover errors have inline retry actions; missing covers have a quiet placeholder.
 
-Navigation and common actions use native line icons. The Ballance navigation entry renders the original wood-ball mesh and texture from the selected game's assets, with a line icon fallback.
+The sidebar uses text only. Search fields and common actions use native line icons. Online/local source selection is separate from the resource-type filter. Switching sources carries compatible type filters across; local resources retain their actual on-disk folders. Folder creation, opening directories, renaming, moving and deleting are available through pointer-positioned context menus. Breadcrumbs appear only inside subfolders; the main toolbar retains search, import and refresh. Configuration groups use compact indented tree branches; movement and camera controls are separate child groups.
 
 ## Validation
 

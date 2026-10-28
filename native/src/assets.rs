@@ -5,7 +5,6 @@ use std::{collections::HashMap, path::Path};
 #[derive(Clone, Debug, Default)]
 pub struct GameAssets {
     pub sky: Option<image::Handle>,
-    pub menu_ball: Option<image::Handle>,
     pub balls: Option<std::sync::Arc<crate::home_balls::Assets>>,
     pub selected_button: Option<image::Handle>,
     pub normal_button: Option<image::Handle>,
@@ -16,9 +15,7 @@ impl GameAssets {
     pub fn load(root: &Path) -> Self {
         let textures = root.join("Textures");
         let balls = crate::home_balls::Assets::load(root);
-        let menu_ball = balls.as_ref().map(|b| b.menu_icon());
         Self {
-            menu_ball,
             captions: captions(&textures.join("Font_1.tga")),
             balls,
             sky: decode(&textures.join("Sky/Sky_A_Front.bmp"), None),

@@ -123,7 +123,8 @@ pub enum Message {
     EntryMenu(PathBuf),
     Browse(PathBuf),
     Listed(u64, Result<Vec<Entry>, String>),
-    AssetKind(Kind),
+    ResourceKind(Kind),
+    ResourceSource(bool),
     Import,
     FilesPicked(Vec<PathBuf>),
     Classified(
@@ -299,6 +300,7 @@ pub struct App {
     entries: Vec<Entry>,
     directory: PathBuf,
     asset_kind: Kind,
+    local_kind: Kind,
     document: Option<Document>,
     config_files: Vec<PathBuf>,
     config_name: String,
@@ -375,6 +377,7 @@ impl App {
             entries: vec![],
             directory: PathBuf::new(),
             asset_kind: Kind::Skies,
+            local_kind: Kind::Maps,
             document: None,
             config_files: vec![],
             config_name: "游戏设置".into(),
@@ -856,10 +859,44 @@ impl App {
                     Err(e) => self.error(e),
                 }
             }
-            Message::AssetKind(kind) => {
+            Message::ResourceSource(online) => {
+                if online {
+                    if let Some(kind) = self.kind() {
+                        let category = crate::hub::Category::from_kind(kind);
+                        if category != self.hub.query.category {
+                            self.hub.selected = None;
+                            self.hub.detail_generation += 1;
+                            self.hub.detail_loading = false;
+                            self.hub.query.category = category;
+                            self.hub.query.page = 0;
+                            self.hub.loaded = false;
+                            self.hub.generation += 1;
+                            self.hub.loading = false;
+                        }
+                    }
+                    return self.update(Message::Page(Page::Hub));
+                }
+                let kind = self
+                    .hub
+                    .query
+                    .category
+                    .local_kind()
+                    .unwrap_or(self.local_kind);
+                return self.update(Message::ResourceKind(kind));
+            }
+            Message::ResourceKind(kind) => {
+                self.local_kind = kind;
                 self.asset_kind = kind;
                 self.directory = PathBuf::new();
-                return self.reload();
+                let page = match kind {
+                    Kind::Maps => Page::Maps,
+                    Kind::Mods => Page::Mods,
+                    _ => Page::Assets,
+                };
+                if page == self.page {
+                    return self.reload();
+                }
+                return self.update(Message::Page(page));
             }
             Message::Import if !self.locked() => {
                 let initial = self.directory.clone();

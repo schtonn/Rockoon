@@ -8,11 +8,8 @@ use iced::{
 };
 #[derive(Clone, Copy, Debug)]
 pub enum Icon {
-    Ball,
-    Library,
     Sliders,
     Download,
-    Settings,
     Globe,
     Map,
     Puzzle,
@@ -28,6 +25,7 @@ pub enum Icon {
     Back,
     Left,
     Right,
+    Down,
     External,
     Save,
     Trash,
@@ -130,6 +128,7 @@ impl<M> canvas::Program<M> for Glyph {
                 line(&[(6., 18.), (18., 6.)], false);
             }
             Icon::Left => line(&[(15., 5.), (8., 12.), (15., 19.)], false),
+            Icon::Down => line(&[(5., 9.), (12., 16.), (19., 9.)], false),
             Icon::Right => line(&[(9., 5.), (16., 12.), (9., 19.)], false),
             Icon::Back => {
                 line(&[(10., 5.), (3., 12.), (10., 19.)], false);
@@ -144,11 +143,6 @@ impl<M> canvas::Program<M> for Glyph {
                 );
             }
             Icon::Play => line(&[(7., 4.), (20., 12.), (7., 20.)], true),
-            Icon::Library => {
-                line(&[(3., 4.), (3., 20.), (8., 20.), (8., 4.)], true);
-                line(&[(12., 4.), (12., 20.)], false);
-                line(&[(16., 4.), (21., 19.)], false);
-            }
             Icon::Map => {
                 line(
                     &[
@@ -262,22 +256,9 @@ impl<M> canvas::Program<M> for Glyph {
                 line(&[(12., 9.), (12., 14.)], false);
                 line(&[(12., 17.), (12., 17.4)], false);
             }
-            Icon::Ball
-            | Icon::Globe
-            | Icon::Search
-            | Icon::Settings
-            | Icon::Eye
-            | Icon::Refresh => {}
+            Icon::Globe | Icon::Search | Icon::Eye | Icon::Refresh => {}
         }
         match self.0 {
-            Icon::Ball => {
-                frame.stroke(&Path::circle(point(12., 12.), 9. * s), stroke);
-                let p = Path::new(|p| {
-                    p.move_to(point(5., 6.));
-                    p.bezier_curve_to(point(19., 7.), point(5., 18.), point(19., 18.));
-                });
-                frame.stroke(&p, stroke);
-            }
             Icon::Globe => {
                 frame.stroke(&Path::circle(point(12., 12.), 9. * s), stroke);
                 frame.stroke(
@@ -293,21 +274,6 @@ impl<M> canvas::Program<M> for Glyph {
             Icon::Search => {
                 frame.stroke(&Path::circle(point(10., 10.), 6.5 * s), stroke);
                 frame.stroke(&Path::line(point(15., 15.), point(21., 21.)), stroke);
-            }
-            Icon::Settings => {
-                frame.stroke(&Path::circle(point(12., 12.), 6. * s), stroke);
-                frame.stroke(&Path::circle(point(12., 12.), 2. * s), stroke);
-                for i in 0..8 {
-                    let a = i as f32 * std::f32::consts::TAU / 8.;
-                    let v = iced::Vector::new(a.cos(), a.sin());
-                    frame.stroke(
-                        &Path::line(
-                            point(12., 12.) + v * (6. * s),
-                            point(12., 12.) + v * (10. * s),
-                        ),
-                        stroke,
-                    );
-                }
             }
             Icon::Eye => {
                 let p = Path::new(|p| {

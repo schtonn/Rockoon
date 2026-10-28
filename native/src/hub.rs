@@ -23,6 +23,25 @@ pub enum Category {
     Patch,
 }
 impl Category {
+    pub fn from_kind(kind: workspace::Kind) -> Self {
+        match kind {
+            workspace::Kind::Maps => Self::Map,
+            workspace::Kind::Mods => Self::Mod,
+            workspace::Kind::Skies => Self::Sky,
+            workspace::Kind::Textures => Self::Texture,
+            workspace::Kind::Sounds => Self::Sound,
+        }
+    }
+    pub fn local_kind(self) -> Option<workspace::Kind> {
+        match self {
+            Self::Map => Some(workspace::Kind::Maps),
+            Self::Mod => Some(workspace::Kind::Mods),
+            Self::Sky => Some(workspace::Kind::Skies),
+            Self::Texture => Some(workspace::Kind::Textures),
+            Self::Sound => Some(workspace::Kind::Sounds),
+            _ => None,
+        }
+    }
     pub const ALL: [Self; 7] = [
         Self::All,
         Self::Map,

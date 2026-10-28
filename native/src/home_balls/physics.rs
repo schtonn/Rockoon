@@ -81,28 +81,33 @@ impl World {
     }
     fn spawn(&mut self, camera: Camera) {
         let kind = [2, 0, 1][self.serial % 3];
-        let target_x = (self.random() - 0.5) * 8.0;
-        let target_z = (self.random() - 0.5) * 4.0;
+        // A ring above the window gives every ball a substantial sideways approach.
+        // Solve the damped ballistic trajectory instead of applying a sideways force in flight.
+        let angle = self.random() * std::f32::consts::TAU;
+        let radius = 17.0 + self.random() * 5.0;
+        let x = angle.cos() * radius;
+        let z = angle.sin() * radius;
+        let position = V(x, camera.ceiling(x, z), z);
+        let target = V(
+            (self.random() - 0.5) * 7.0,
+            RADIUS,
+            (self.random() - 0.5) * 3.0,
+        );
+        let time = 1.1 + self.random() * 0.3;
+        let damping = PROFILES[kind].damping;
+        let drift = (1.0 - (-damping * time).exp()) / damping;
+        let terminal = V(0.0, -20.0 / damping, 0.0);
+        let velocity = (target - position - terminal * (time - drift)) * (1.0 / drift);
         let angular = V(
-            (self.random() - 0.5) * 6.0,
-            (self.random() - 0.5) * 6.0,
-            (self.random() - 0.5) * 6.0,
+            (self.random() - 0.5) * 8.0,
+            (self.random() - 0.5) * 8.0,
+            (self.random() - 0.5) * 8.0,
         );
         let mut rotation = Q::default();
         rotation.advance(angular, 8.0);
-        let velocity = V(
-            (self.random() - 0.5) * 16.0,
-            -0.5 - self.random() * 3.0,
-            (self.random() - 0.5) * 14.0,
-        );
-        // Stronger launch momentum, aimed loosely toward the finite platform after air drag.
-        let damping = PROFILES[kind].damping;
-        let travel = (1.0 - (-damping * 2.3).exp()) / damping * 0.85;
-        let x = target_x - velocity.0 * travel;
-        let z = target_z - velocity.2 * travel;
         self.bodies.push(Body {
             kind,
-            position: V(x, camera.ceiling(x, z), z),
+            position,
             velocity,
             angular,
             rotation,
@@ -316,6 +321,42 @@ mod tests {
             velocity: V(vx, 0.0, 0.0),
             angular: V::default(),
             rotation: Q::default(),
+        }
+    }
+    #[test]
+    fn ring_launches_enter_from_top_and_reach_platform_with_oblique_motion() {
+        for (width, height) in [(876.0, 700.0), (676.0, 580.0)] {
+            let camera = Camera::new(width, height);
+            let mut world = World::new(42);
+            let mut lateral = 0;
+            for _ in 0..90 {
+                world.spawn(camera);
+                let body = world.bodies.pop().unwrap();
+                let radius =
+                    (body.position.0 * body.position.0 + body.position.2 * body.position.2).sqrt();
+                assert!((16.99..=22.01).contains(&radius));
+                assert!(camera.project(body.position).1 < -59.9);
+                let mut pose = body.clone();
+                let start = camera.project(pose.position);
+                pose.integrate(0.5);
+                lateral += usize::from((camera.project(pose.position).0 - start.0).abs() > 65.0);
+                let mut landed = body.clone();
+                for _ in 0..100 {
+                    if landed.position.1 <= RADIUS {
+                        break;
+                    }
+                    landed.integrate(STEP);
+                }
+                assert!(
+                    landed.position.0.abs() < 4.0 && landed.position.2.abs() < 2.1,
+                    "missed platform: {landed:?}"
+                );
+                assert!(body.velocity.length() < 100.0);
+            }
+            assert!(
+                lateral > 50,
+                "too many apparently vertical approaches: {lateral}"
+            );
         }
     }
     #[test]

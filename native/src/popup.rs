@@ -18,15 +18,41 @@ pub fn menu<'a>(
         panel: panel.unwrap_or_else(|| iced::widget::space().into()),
         open,
         right,
+        context: None,
     })
+}
+/// File-manager style menu at the pointer; nested contexts consume the click first.
+pub fn context<'a>(
+    content: impl Into<Element<'a, Message>>,
+    panel: Option<Element<'a, Message>>,
+    on_open: Message,
+) -> Element<'a, Message> {
+    Element::new(Popup {
+        trigger: content.into(),
+        open: panel.is_some(),
+        panel: panel.unwrap_or_else(|| iced::widget::space().into()),
+        right: false,
+        context: Some(on_open),
+    })
+}
+#[derive(Default)]
+struct Pointer {
+    at: Option<Point>,
 }
 struct Popup<'a> {
     trigger: Element<'a, Message>,
     panel: Element<'a, Message>,
     open: bool,
     right: bool,
+    context: Option<Message>,
 }
 impl Widget<Message, Theme, Renderer> for Popup<'_> {
+    fn tag(&self) -> widget::tree::Tag {
+        widget::tree::Tag::of::<Pointer>()
+    }
+    fn state(&self) -> widget::tree::State {
+        widget::tree::State::new(Pointer::default())
+    }
     fn size(&self) -> Size<Length> {
         self.trigger.as_widget().size()
     }
@@ -94,6 +120,19 @@ impl Widget<Message, Theme, Renderer> for Popup<'_> {
             shell,
             viewport,
         );
+        if !shell.is_event_captured()
+            && matches!(
+                event,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
+            )
+            && cursor.is_over(layout.bounds())
+            && cursor.position().is_some_and(|p| viewport.contains(p))
+            && let Some(message) = &self.context
+        {
+            tree.state.downcast_mut::<Pointer>().at = cursor.position();
+            shell.publish(message.clone());
+            shell.capture_event();
+        }
     }
     fn mouse_interaction(
         &self,
@@ -131,8 +170,21 @@ impl Widget<Message, Theme, Renderer> for Popup<'_> {
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         if self.open {
-            let anchor = layout.bounds() + translation;
-            if !anchor.intersects(viewport) {
+            let anchor = if self.context.is_some() {
+                let at = tree
+                    .state
+                    .downcast_ref::<Pointer>()
+                    .at
+                    .unwrap_or(layout.position());
+                Rectangle::new(at, Size::ZERO)
+            } else {
+                layout.bounds() + translation
+            };
+            if if self.context.is_some() {
+                !viewport.contains(anchor.position())
+            } else {
+                !anchor.intersects(viewport)
+            } {
                 return None;
             }
             Some(overlay::Element::new(Box::new(Menu {
@@ -235,7 +287,14 @@ impl overlay::Overlay<Message, Theme, Renderer> for Menu<'_, '_> {
         };
         if escape || outside {
             shell.publish(Message::CloseMenus);
-            shell.capture_event();
+            if !outside
+                || !matches!(
+                    event,
+                    Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
+                )
+            {
+                shell.capture_event();
+            }
             return;
         }
         self.panel.as_widget_mut().update(
