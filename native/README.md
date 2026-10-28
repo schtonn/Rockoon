@@ -94,7 +94,16 @@ cargo run --manifest-path native/Cargo.toml
 cargo build --release --manifest-path native/Cargo.toml
 ~~~
 
-输出为 native/target/release/rockoon-native.exe，复制使用时请同时保留随包的 Rockoon-SourceHanSans-LICENSE.txt。
+编译缓存统一留在 `native/target`。本地测试包使用固定命令生成：
+
+~~~powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File native/scripts/package-preview.ps1
+~~~
+
+运行 `artifacts/preview/Rockoon.exe`，许可证位于同目录的 `licenses`，版本和文件信息见 `build-info.json`。
+已完成编译时可加 `-SkipBuild` 只打包，打包命令会按完整路径关闭占用目标文件的测试进程后覆盖文件。
+测试包只覆盖这个固定位置，不再向下载目录复制带编号、日期或功能名称的副本。
+本地保留的正式包放在 `artifacts/releases/<tag>`，用户状态备份放在 `artifacts/backups`，这些内容均不提交到仓库。
 命令行可传入游戏根目录，不改写已保存的目录选择：
 
 ~~~powershell
