@@ -1031,10 +1031,11 @@ impl App {
             .width(88)
             .align_x(Alignment::End),
             more_button(Message::EntryMenu(entry.path.clone())),
-            container(primary).width(76).align_right(Fill)
+            container(primary).width(76).align_x(Alignment::End)
         ]
         .spacing(8)
-        .align_y(Alignment::Center);
+        .align_y(Alignment::Center)
+        .width(Fill);
         crate::popup::context(
             container(line)
                 .padding(iced::Padding::ZERO.left(if sky_child { 26.0 } else { 0.0 }))
@@ -1102,10 +1103,11 @@ impl App {
                 true
             ))
             .width(76)
-            .align_right(Fill),
+            .align_x(Alignment::End),
         ]
         .spacing(8)
-        .align_y(Alignment::Center);
+        .align_y(Alignment::Center)
+        .width(Fill);
         crate::popup::context(
             container(line).height(34).center_y(34).width(Fill),
             panel,
@@ -1365,7 +1367,9 @@ impl App {
             row![
                 crate::hint::label(label.to_owned(), description.to_owned()),
                 space::horizontal(),
-                container(control).width(CONTROL_WIDTH).align_right(Fill)
+                container(control)
+                    .width(CONTROL_WIDTH)
+                    .align_x(Alignment::End)
             ]
             .spacing(8)
             .align_y(Alignment::Center),
