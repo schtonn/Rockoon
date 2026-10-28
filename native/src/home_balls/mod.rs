@@ -74,6 +74,16 @@ fn load_texture(path: &Path) -> Option<bitmap::RgbaImage> {
     (texture.width() > 0 && texture.height() > 0).then_some(texture)
 }
 impl Assets {
+    pub fn menu_icon(&self) -> iced::widget::image::Handle {
+        raster::ball(
+            &self.balls[0],
+            math::V::default(),
+            math::Q::default(),
+            camera::Camera::new(1040.0, 700.0),
+            None,
+        )
+        .handle()
+    }
     pub fn load(root: &Path) -> Option<Arc<Self>> {
         let meshes = mesh::load(root)?;
         let mut balls = Vec::new();

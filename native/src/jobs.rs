@@ -14,7 +14,7 @@ use std::{
 
 static ACTIVE: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
 static INSTALL: Mutex<()> = Mutex::new(());
-const ORIGINS: [&str; 2] = ["https://dl.ballance.top", "https://dl.bcrc.site"];
+pub(crate) const ORIGINS: [&str; 2] = ["https://dl.ballance.top", "https://dl.bcrc.site"];
 fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(5))
@@ -124,6 +124,12 @@ pub enum Request {
         patch: Patch,
         version: Option<Version>,
     },
+    Resource {
+        root: PathBuf,
+        package: crate::hub::Package,
+        choice: crate::hub::Choice,
+        sky: String,
+    },
     Brp {
         root: PathBuf,
         url: String,
@@ -141,6 +147,7 @@ impl Request {
             Self::Update { root, .. }
             | Self::Game { root, .. }
             | Self::Patch { root, .. }
+            | Self::Resource { root, .. }
             | Self::Brp { root, .. }
             | Self::Local { root, .. } => root,
             #[cfg(not(windows))]
@@ -148,7 +155,26 @@ impl Request {
         }
     }
     pub fn key(&self) -> String {
-        format!("{self:?}")
+        match self {
+            Self::Resource {
+                root,
+                package,
+                choice,
+                ..
+            } => format!(
+                "resource:{}:{}:{:?}",
+                root.display(),
+                package.id,
+                choice.version()
+            ),
+            Self::Brp { root, url, .. } if package_id(url).is_some() => format!(
+                "resource:{}:{}:{:?}",
+                root.display(),
+                package_id(url).unwrap(),
+                selected_version(url)
+            ),
+            _ => format!("{self:?}"),
+        }
     }
     pub fn title(&self) -> String {
         match self {
@@ -157,6 +183,7 @@ impl Request {
             Self::Wine { .. } => "准备 Wine".into(),
             Self::Game { .. } => "安装 Ballance".into(),
             Self::Patch { patch, .. } => patch.name.clone(),
+            Self::Resource { package, .. } => package.title().into(),
             Self::Brp { .. } => "导入资源包".into(),
             Self::Local { .. } => "导入本地资源包".into(),
         }
@@ -515,6 +542,37 @@ impl Job {
                 }
                 Ok(reports.join("\n"))
             }
+            Request::Resource {
+                root,
+                package,
+                choice,
+                sky,
+            } => {
+                let current = crate::hub::package(package.id)?;
+                let suffix = choice
+                    .version()
+                    .map(|v| format!("versions/{v}/download"))
+                    .unwrap_or_else(|| "download".into());
+                let url = format!("{}/packages/{}/{suffix}", origin(), package.id);
+                let queue = import_queue(&url)?;
+                let mut reports = Vec::new();
+                let mut paths = Vec::new();
+                for url in queue {
+                    let file = self.download(&url)?;
+                    self.check()?;
+                    self.phase("安装");
+                    if let Ok(mut state) = self.state.lock() {
+                        state.cancellable = false;
+                    }
+                    let (message, installed) = workspace::brp_files(root, file.path(), sky)?;
+                    reports.push(message);
+                    paths.extend(installed);
+                }
+                if let Err(e) = crate::hub::record(root, &current, choice, paths) {
+                    reports.push(format!("安装已完成，记录未保存：{e}"));
+                }
+                Ok(reports.join("\n"))
+            }
             Request::Brp { root, url, sky } => {
                 let queue = import_queue(url)?;
                 let mut reports = Vec::new();
@@ -551,6 +609,12 @@ pub fn ensure_io(root: &Path) -> Result<(), String> {
 }
 fn package_id(url: &str) -> Option<u64> {
     let url = url::Url::parse(url).ok()?;
+    if !ORIGINS
+        .iter()
+        .any(|o| url.origin().ascii_serialization() == *o)
+    {
+        return None;
+    }
     let mut parts = url.path_segments()?;
     while let Some(part) = parts.next() {
         if part == "packages" {
@@ -559,12 +623,32 @@ fn package_id(url: &str) -> Option<u64> {
     }
     None
 }
+fn selected_version(input: &str) -> Option<u64> {
+    let parsed = url::Url::parse(input).ok()?;
+    let parts: Vec<_> = parsed.path_segments()?.collect();
+    if parts.len() == 5
+        && parts[0] == "packages"
+        && parts[2] == "versions"
+        && parts[4] == "download"
+    {
+        parts[3].parse().ok()
+    } else {
+        None
+    }
+}
 fn import_queue(url: &str) -> Result<Vec<String>, String> {
+    plan_import(url, |id| hub(&format!("/packages/{id}")))
+}
+fn plan_import(
+    url: &str,
+    mut lookup: impl FnMut(u64) -> Result<Value, String>,
+) -> Result<Vec<String>, String> {
     fn visit(
         id: u64,
         depth: usize,
         seen: &mut std::collections::HashSet<u64>,
         queue: &mut Vec<String>,
+        lookup: &mut impl FnMut(u64) -> Result<Value, String>,
     ) -> Result<(), String> {
         if depth > 5 {
             return Err("资源依赖超过 5 层".into());
@@ -572,14 +656,17 @@ fn import_queue(url: &str) -> Result<Vec<String>, String> {
         if !seen.insert(id) {
             return Ok(());
         }
-        let info = hub(&format!("/packages/{id}"))?;
+        if seen.len() > 32 {
+            return Err("单次安装依赖超过 32 个资源".into());
+        }
+        let info = lookup(id)?;
         if let Some(deps) = info["dependencies"].as_array() {
             for dep in deps {
                 let id = dep
                     .as_u64()
                     .or_else(|| dep.as_str().and_then(|s| s.parse().ok()))
                     .ok_or("资源依赖编号无效")?;
-                visit(id, depth + 1, seen, queue)?;
+                visit(id, depth + 1, seen, queue, lookup)?;
             }
         }
         queue.push(format!("{}/packages/{id}/download", origin()));
@@ -587,7 +674,18 @@ fn import_queue(url: &str) -> Result<Vec<String>, String> {
     }
     if let Some(id) = package_id(url) {
         let mut queue = Vec::new();
-        visit(id, 0, &mut std::collections::HashSet::new(), &mut queue)?;
+        visit(
+            id,
+            0,
+            &mut std::collections::HashSet::new(),
+            &mut queue,
+            &mut lookup,
+        )?;
+        if let Some(version) = selected_version(url)
+            && let Some(target) = queue.last_mut()
+        {
+            *target = format!("{}/packages/{id}/versions/{version}/download", origin());
+        }
         Ok(queue)
     } else {
         Ok(vec![url.into()])
@@ -650,6 +748,63 @@ pub fn patch_updates(root: &Path) -> Result<Vec<Patch>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resource_plan_keeps_selected_version_and_deduplicates_shared_dependencies() {
+        let queue = plan_import(
+            "https://dl.bcrc.site/packages/7/versions/3/download",
+            |id| Ok(json!({"dependencies":match id{7=>vec![8,9],8|9=>vec![10],_=>vec![]}})),
+        )
+        .unwrap();
+        let paths: Vec<_> = queue
+            .iter()
+            .map(|u| url::Url::parse(u).unwrap().path().to_owned())
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "/packages/10/download",
+                "/packages/8/download",
+                "/packages/9/download",
+                "/packages/7/versions/3/download"
+            ]
+        );
+        assert!(package_id("https://example.org/packages/7/download").is_none());
+        assert!(
+            plan_import("https://dl.bcrc.site/packages/1/download", |id| Ok(
+                json!({"dependencies":[id+1]})
+            ))
+            .is_err()
+        );
+    }
+    #[test]
+    fn optional_native_catalog_install() {
+        if std::env::var("ROCKOON_HUB_NETWORK_TEST").as_deref() != Ok("1") {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let package = crate::hub::package(445).unwrap();
+        let name = package.title().to_owned();
+        let job = Job::new(Request::Resource {
+            root: root.path().to_owned(),
+            package,
+            choice: crate::hub::Choice::Latest,
+            sky: "X".into(),
+        });
+        let report = job.run().unwrap();
+        let receipts = crate::hub::receipts(root.path()).unwrap();
+        assert!(report.contains(&name));
+        assert_eq!(receipts.len(), 1);
+        assert_eq!(receipts[0].id, 445);
+        assert!(!receipts[0].files.is_empty());
+        assert!(
+            receipts[0]
+                .files
+                .iter()
+                .all(|p| root.path().join(p).is_file())
+        );
+        eprintln!("Native catalogue installed package 445 into isolated fixture: {report}");
+    }
+
     #[test]
     #[ignore = "downloads the official game archive; run explicitly"]
     fn official_game_download_and_archive_validation() {

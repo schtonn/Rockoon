@@ -293,6 +293,9 @@ pub fn archive_entries(path: &Path, strip: bool) -> Result<Vec<(PathBuf, Vec<u8>
     Ok(result)
 }
 pub fn brp(root: &Path, archive: &Path, sky: &str) -> Result<String, String> {
+    brp_files(root, archive, sky).map(|(message, _)| message)
+}
+pub fn brp_files(root: &Path, archive: &Path, sky: &str) -> Result<(String, Vec<PathBuf>), String> {
     idle(root)?;
     let info = rockoon_core::brp::validate_brp(archive, root).map_err(error)?;
     archive_entries(archive, false)?;
@@ -322,7 +325,7 @@ pub fn brp(root: &Path, archive: &Path, sky: &str) -> Result<String, String> {
         ));
     }
     replace(root, &changes)?;
-    Ok(format!(
+    let message = format!(
         "{}：已导入 {} 个文件{}",
         info.manifest.name.unwrap_or_else(|| "资源包".into()),
         changes.len(),
@@ -331,7 +334,8 @@ pub fn brp(root: &Path, archive: &Path, sky: &str) -> Result<String, String> {
         } else {
             ""
         }
-    ))
+    );
+    Ok((message, changes.into_iter().map(|(p, _)| p).collect()))
 }
 
 #[cfg(test)]

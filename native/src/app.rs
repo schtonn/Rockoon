@@ -12,11 +12,13 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+mod catalog;
 mod views;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Home,
+    Hub,
     Maps,
     Mods,
     Assets,
@@ -31,7 +33,7 @@ pub enum Page {
 impl Page {
     fn section(self) -> Self {
         match self {
-            Self::Maps | Self::Mods | Self::Assets => Self::Maps,
+            Self::Hub | Self::Maps | Self::Mods | Self::Assets => Self::Maps,
             Self::Config | Self::Data | Self::Profiles => Self::Config,
             Self::Install | Self::Tasks => Self::Tasks,
             other => other,
@@ -47,6 +49,7 @@ impl Page {
     fn label(self) -> &'static str {
         match self {
             Self::Home => "Ballance",
+            Self::Hub => "在线",
             Self::Maps => "地图",
             Self::Mods => "模组",
             Self::Assets => "素材",
@@ -102,6 +105,7 @@ pub struct Startup {
 }
 #[derive(Clone, Debug)]
 pub enum Message {
+    Hub(catalog::Action),
     Startup(Result<Startup, String>),
     PickFolder,
     FolderPicked(Option<PathBuf>),
@@ -261,6 +265,7 @@ impl Notice {
     }
 }
 pub struct App {
+    hub: crate::hub::State,
     home_active: bool,
     detached_tas: bool,
     tas_level: u8,
@@ -336,6 +341,7 @@ async fn background<T: Send + 'static>(
 impl App {
     pub fn new() -> (Self, Task<Message>) {
         let state = Self {
+            hub: crate::hub::State::default(),
             home_active: true,
             detached_tas: std::env::args().any(|a| a == "--tas-editor"),
             tas_level: 1,
@@ -502,6 +508,7 @@ impl App {
             );
         }
         match self.page {
+            Page::Hub => return self.ensure_catalog(),
             Page::Config | Page::Data => {
                 if let Some(root) = self.root() {
                     self.busy = true;
@@ -607,6 +614,9 @@ impl App {
         )
     }
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if let Message::Hub(action) = message {
+            return self.update_catalog(action);
+        }
         if matches!(
             &message,
             Message::Open(_)
@@ -623,6 +633,7 @@ impl App {
             self.close_menus();
         }
         match message {
+            Message::Hub(_) => unreachable!(),
             Message::CloseMenus => self.close_menus(),
             Message::NoticeTick => {
                 if self
@@ -659,6 +670,7 @@ impl App {
 
                         if let Some(page) = args.iter().find_map(|s| s.strip_prefix("--page=")) {
                             let page = match page {
+                                "hub" => Page::Hub,
                                 "maps" => Page::Maps,
                                 "mods" => Page::Mods,
                                 "assets" => Page::Assets,
@@ -761,6 +773,9 @@ impl App {
                             self.instance = Some(instance);
                             if self.kind().is_some() {
                                 return self.reload();
+                            }
+                            if self.page == Page::Hub {
+                                return self.ensure_catalog();
                             }
                         }
                         Err(e) => self.error(e),

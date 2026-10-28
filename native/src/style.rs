@@ -305,3 +305,23 @@ pub fn range(theme: &Theme, status: slider::Status) -> slider::Style {
     style.handle.border_color = c.solid;
     style.with_circular_handle(6.0)
 }
+
+pub fn catalog_card(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style {
+        background: Some(c.surface.into()),
+        border: Border {
+            color: c.line,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    }
+}
+pub fn catalog_placeholder(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style {
+        background: Some(c.hover.into()),
+        ..Default::default()
+    }
+}

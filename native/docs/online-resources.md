@@ -1,0 +1,20 @@
+# Native online resources
+
+The Resources → Online tab calls the community resource site's public API directly. It uses native Iced widgets and the software renderer; there is no embedded browser or WebView.
+
+- Catalogue: `/packages` with encoded search, category, sort, offset and 12 items per page. Search is debounced and stale responses cannot replace newer queries.
+- Details: `/packages/{id}` and `/packages/{id}/versions`. Author, cover gallery, Markdown instructions and dependency names are retained. Website links open externally.
+- Installation: the existing shared download queue downloads BRP archives, resolves dependencies first and uses the existing validated, backed-up file replacement. Explicit historical version URLs remain selected. Skyboxes use the selected level; components and patches open the existing component manager.
+- Installation records: `<game>/.rockoon/online-resources.json` stores package revision and installed relative paths. Missing files invalidate the installed indicator. These records describe resources installed through this new tab; they do not identify arbitrary pre-existing files.
+- Cover images: trusted `/files/` paths from either resource-site origin, four concurrent requests, 8 MiB download cap, 4096-pixel dimensions and bounded decoded memory. Compressed images are cached for seven days under the launcher's preferences directory. Disk cache is pruned from 128 MiB to 96 MiB; decoded images are limited to 64 entries or 32 MiB. List thumbnails are 512×288 at most; detail previews are 1200×900 at most. A custom image widget clips at the renderer layer because the software renderer does not enforce image-local clip bounds.
+- Primary and backup hosts use the existing origin selection mechanism. API errors and cover errors have inline retry actions; missing covers have a quiet placeholder.
+
+Navigation and common actions use native line icons. The Ballance navigation entry renders the original wood-ball mesh and texture from the selected game's assets, with a line icon fallback.
+
+## Validation
+
+`cargo fmt --check`, Clippy with all targets and warnings denied, and the native workspace test suite. Regression tests cover Unicode queries, stale search responses, allowed image origins, missing installation files, dependency deduplication and selected historical versions. The existing original-asset physics test is retained.
+
+The opt-in `optional_native_catalog_install` test (`ROCKOON_HUB_NETWORK_TEST=1`) downloaded public map 445 (唯一路径 V1.1) and installed it into a temporary fixture, checking installed files and the receipt. It never launches a game. Interactive review uses an isolated game fixture and isolated launcher preferences. Native search, cover clipping, details and the download task were exercised. The first interactive installation encountered a transient TLS EOF from both site hosts; retrying the task completed the installation and produced a valid receipt.
+
+No release, upload or repository push is part of this change.

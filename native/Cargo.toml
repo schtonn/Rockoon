@@ -15,8 +15,8 @@ url = "2"
 flate2 = "1"
 fs2 = "0.4"
 
-iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "crisp", "tokio", "image-without-codecs", "canvas", "advanced"] }
-bitmap = { package = "image", version = "0.25", default-features = false, features = ["bmp", "tga"] }
+iced = { version = "=0.14.0", default-features = false, features = ["tiny-skia", "crisp", "tokio", "image-without-codecs", "canvas", "advanced", "markdown"] }
+bitmap = { package = "image", version = "0.25", default-features = false, features = ["bmp", "tga", "png", "jpeg", "webp"] }
 rfd = "0.16"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -40,14 +40,24 @@ fn scrollable<'a>(
     iced::widget::scrollable(content).style(style::scroll)
 }
 fn action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
-    button(text(crate::l10n::text(label)).size(14))
+    let content: Element<'a, Message> = if let Some(icon) = crate::icons::for_label(label) {
+        crate::icons::label(icon, crate::l10n::text(label))
+    } else {
+        text(crate::l10n::text(label)).size(14).into()
+    };
+    button(content)
         .padding([8, 12])
         .style(style::quiet)
         .on_press_maybe(enabled.then_some(message))
         .into()
 }
 fn menu_action<'a>(label: &str, message: Message, enabled: bool) -> Element<'a, Message> {
-    button(text(crate::l10n::text(label)).size(14))
+    let content: Element<'a, Message> = if let Some(icon) = crate::icons::for_label(label) {
+        crate::icons::label(icon, crate::l10n::text(label))
+    } else {
+        text(crate::l10n::text(label)).size(14).into()
+    };
+    button(content)
         .padding([8, 10])
         .width(Fill)
         .style(style::quiet)
@@ -82,6 +92,7 @@ impl App {
                 .into()
         } else {
             let body = match self.page {
+                Page::Hub => self.online_resources(),
                 Page::Maps | Page::Mods | Page::Assets => self.resources(),
                 Page::Config | Page::Data => self.configuration(),
                 Page::Profiles => self.profiles(),
@@ -119,7 +130,7 @@ impl App {
                             .size(14)
                             .color(colors.text.scale_alpha(alpha))
                             .width(Fill),
-                        button(text("×").size(18).color(colors.text.scale_alpha(alpha)))
+                        button(crate::icons::view(crate::icons::Icon::Close, 16.0))
                             .padding([2, 7])
                             .style(style::quiet)
                             .on_press(Message::Dismiss)
@@ -282,16 +293,40 @@ impl App {
         base
     }
     fn nav(&self, page: Page) -> Element<'_, Message> {
+        let glyph: Element<'_, Message> = if page == Page::Home {
+            self.instance
+                .as_ref()
+                .and_then(|i| i.visuals.menu_ball.as_ref())
+                .map(|ball| image(ball.clone()).width(19).height(19).into())
+                .unwrap_or_else(|| crate::icons::view(crate::icons::Icon::Ball, 18.0))
+        } else {
+            crate::icons::view(
+                match page {
+                    Page::Maps => crate::icons::Icon::Library,
+                    Page::Config => crate::icons::Icon::Sliders,
+                    Page::Tasks => crate::icons::Icon::Download,
+                    _ => crate::icons::Icon::Settings,
+                },
+                18.0,
+            )
+        };
         button(
-            text(crate::l10n::text(page.section_label()))
-                .size(15)
-                .font(iced::Font {
-                    weight: iced::font::Weight::Medium,
-                    ..iced::Font::with_name("Source Han Sans CN")
-                }),
+            row![
+                glyph,
+                text(crate::l10n::text(page.section_label()))
+                    .size(15)
+                    .font(iced::Font {
+                        weight: iced::font::Weight::Medium,
+                        ..iced::Font::with_name("Source Han Sans CN")
+                    })
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
         )
         .on_press(Message::Page(if self.page.section() == page.section() {
             self.page
+        } else if page == Page::Maps {
+            Page::Hub
         } else {
             page
         }))
@@ -302,7 +337,7 @@ impl App {
     }
     fn section_tabs(&self) -> Element<'_, Message> {
         let pages: &[Page] = match self.page.section() {
-            Page::Maps => &[Page::Maps, Page::Mods, Page::Assets],
+            Page::Maps => &[Page::Hub, Page::Maps, Page::Mods, Page::Assets],
             Page::Config => &[Page::Config, Page::Data, Page::Profiles],
             Page::Tasks => &[Page::Tasks, Page::Install],
             _ => &[],
@@ -312,10 +347,12 @@ impl App {
         }
         let mut tabs = row![].spacing(6);
         for &page in pages {
-            let label = if page == Page::Config {
-                "参数"
-            } else {
-                page.label()
+            let label = match page {
+                Page::Config => "参数",
+                Page::Maps => "本地地图",
+                Page::Mods => "本地模组",
+                Page::Assets => "本地素材",
+                _ => page.label(),
             };
             tabs = tabs.push(
                 button(text(crate::l10n::text(label)).size(14))
@@ -329,7 +366,7 @@ impl App {
                 if self.opening_hub {
                     "正在连接…"
                 } else {
-                    "社区资源站 ↗"
+                    "社区资源站"
                 },
                 Message::OpenHub,
                 !self.opening_hub,
@@ -645,9 +682,24 @@ impl App {
                 panel,
                 true,
             );
-            let line = row![text(&entry.name).size(14).width(Fill), primary, more]
-                .spacing(8)
-                .align_y(Alignment::Center);
+            let glyph = if entry.directory {
+                crate::icons::Icon::Folder
+            } else {
+                match kind {
+                    Kind::Maps => crate::icons::Icon::Map,
+                    Kind::Mods => crate::icons::Icon::Puzzle,
+                    Kind::Sounds => crate::icons::Icon::Volume,
+                    _ => crate::icons::Icon::Image,
+                }
+            };
+            let line = row![
+                crate::icons::view(glyph, 18.0),
+                text(&entry.name).size(14).width(Fill),
+                primary,
+                more
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center);
             list = list.push(container(line).padding([8, 0]));
             list = list.push(rule::horizontal(1));
         }
@@ -668,16 +720,12 @@ impl App {
             .spacing(12);
             if self.search.trim().is_empty() {
                 empty = empty.push(
-                    text(crate::l10n::text(if self.protocol_ready {
-                        "在社区资源站点击“一键安装”，也可以导入本地文件。"
-                    } else {
-                        "可以导入本地文件，或打开社区资源站下载。"
-                    }))
+                    text(crate::l10n::text(
+                        "可以在“在线”浏览安装资源，也可以导入本地文件。",
+                    ))
                     .size(14),
                 );
-                if !self.protocol_ready {
-                    empty = empty.push(action("启用一键安装", Message::RegisterProtocol, true));
-                }
+                empty = empty.push(action("浏览在线资源", Message::Page(Page::Hub), true));
             }
             list = list.push(container(empty).padding([24, 0]));
         }
@@ -716,7 +764,7 @@ impl App {
         .height(Fill)
         .into()
     }
-    fn sky_picker(&self) -> Element<'_, Message> {
+    pub(super) fn sky_picker(&self) -> Element<'_, Message> {
         let mut options = vec!["自制地图（X）".to_owned()];
         for i in 1..=13 {
             options.push(format!("第 {i} 关"));
