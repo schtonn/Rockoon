@@ -1,9 +1,10 @@
 //! Wine onboarding and settings share the same status and actions.
 use super::views::{action, scrollable};
 use super::*;
+use crate::l10n::ui_text as text;
 use iced::{
     Fill,
-    widget::{column, container, text},
+    widget::{column, container},
 };
 use rockoon_platform::wine::{self, WineStatus};
 

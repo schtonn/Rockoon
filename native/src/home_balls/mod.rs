@@ -267,7 +267,7 @@ impl Widget<Message, Theme, Renderer> for Scene {
                         (&self.assets.platform, &state.platform, &state.background)
                         && let Some(texture) = &asset.flames
                     {
-                        for x in [-9.0, 9.0] {
+                        for x in [-8.5, 8.5] {
                             let flame = flames::render(
                                 texture,
                                 math::V(x, 0.06, 0.0),

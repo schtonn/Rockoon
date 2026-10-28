@@ -6,14 +6,14 @@ use iced::advanced::{
 };
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
 pub fn label<'a>(label: impl Into<String>, help: impl Into<String>) -> Element<'a, Message> {
-    wrap(iced::widget::text(label.into()).size(14), help)
+    wrap(crate::l10n::ui_text(label.into()).size(14), help)
 }
 pub fn wrap<'a>(
     content: impl Into<Element<'a, Message>>,
     help: impl Into<String>,
 ) -> Element<'a, Message> {
     let content = content.into();
-    let help = help.into();
+    let help = crate::l10n::text(&help.into());
     if help.is_empty() {
         return content;
     }

@@ -1,9 +1,10 @@
 use super::views::{action, scrollable, separator};
 use super::*;
 use crate::blender;
+use crate::l10n::ui_text as text;
 use iced::{
     Alignment, Fill,
-    widget::{column, container, row, space, text},
+    widget::{column, container, row, space},
 };
 
 #[derive(Clone, Debug)]
@@ -104,12 +105,12 @@ impl App {
                     async {
                         #[cfg(target_os = "macos")]
                         let picked = rfd::AsyncFileDialog::new()
-                            .set_title("选择 Blender.app")
+                            .set_title(crate::l10n::text("选择 Blender.app"))
                             .pick_folder()
                             .await;
                         #[cfg(not(target_os = "macos"))]
                         let picked = rfd::AsyncFileDialog::new()
-                            .set_title("选择 Blender 可执行文件")
+                            .set_title(crate::l10n::text("选择 Blender 可执行文件"))
                             .pick_file()
                             .await;
                         picked.map(|p| p.path().to_string_lossy().into_owned())

@@ -1,14 +1,13 @@
 use super::*;
+use crate::l10n::{Label, ui_text as text};
 use iced::{
     Alignment, Fill,
-    widget::{
-        button, column, container, image, opaque, progress_bar, row, rule, space, stack, text,
-    },
+    widget::{button, column, container, image, opaque, progress_bar, row, rule, space, stack},
 };
 const CONTROL_WIDTH: f32 = 184.0;
 pub(super) const ROW_HEIGHT: f32 = 36.0;
 fn text_input<'a>(placeholder: &str, value: &str) -> iced::widget::TextInput<'a, Message> {
-    iced::widget::text_input(placeholder, value)
+    iced::widget::text_input(&crate::l10n::text(placeholder), value)
         .size(14)
         .padding(6)
         .style(style::input)
@@ -38,13 +37,20 @@ pub(super) fn pick_list<'a, T, L, V>(
     options: L,
     selected: Option<V>,
     on_selected: impl Fn(T) -> Message + 'a,
-) -> iced::widget::PickList<'a, T, L, V, Message>
+) -> iced::widget::PickList<'a, Label<T>, Vec<Label<T>>, Label<T>, Message>
 where
     T: ToString + PartialEq + Clone + 'a,
     L: std::borrow::Borrow<[T]> + 'a,
     V: std::borrow::Borrow<T> + 'a,
 {
-    iced::widget::pick_list(options, selected, on_selected)
+    let options = options
+        .borrow()
+        .iter()
+        .cloned()
+        .map(Label)
+        .collect::<Vec<_>>();
+    let selected = selected.map(|value| Label(value.borrow().clone()));
+    iced::widget::pick_list(options, selected, move |Label(value)| on_selected(value))
         .text_size(14)
         .padding(6)
         .width(CONTROL_WIDTH)
@@ -263,6 +269,7 @@ impl App {
             .into();
         }
         if let Some(conflict) = &self.save_conflict {
+            let conflict = crate::l10n::text(conflict);
             let body = column![
                 text("配置发生冲突").size(19),
                 text(format!("{conflict}，要用当前修改覆盖吗？")).size(14),
@@ -385,7 +392,7 @@ impl App {
         if let Some(preview) = &self.preview {
             let mut panel = column![
                 row![
-                    text(
+                    iced::widget::text(
                         self.preview_path
                             .as_ref()
                             .and_then(|p| p.file_name())
@@ -808,9 +815,12 @@ impl App {
                 for part in relative.components() {
                     path.push(part);
                     crumbs = crumbs.push(text("/").size(14)).push(
-                        button(text(part.as_os_str().to_string_lossy().to_string()).size(14))
-                            .style(style::quiet)
-                            .on_press(Message::Browse(path.clone())),
+                        button(
+                            iced::widget::text(part.as_os_str().to_string_lossy().to_string())
+                                .size(14),
+                        )
+                        .style(style::quiet)
+                        .on_press(Message::Browse(path.clone())),
                     );
                 }
             }
@@ -1017,7 +1027,7 @@ impl App {
             crate::icons::view(glyph, 18.0),
             iced::widget::mouse_area(
                 container(
-                    text(if sky_child {
+                    iced::widget::text(if sky_child {
                         entry.path.file_name().unwrap_or_default().to_string_lossy()
                     } else {
                         std::borrow::Cow::Borrowed(entry.name.as_str())
@@ -1096,7 +1106,7 @@ impl App {
                             },
                             16.0
                         ),
-                        text(group.name.clone()).size(14),
+                        iced::widget::text(group.name.clone()).size(14),
                     ]
                     .spacing(10)
                     .align_y(Alignment::Center)
@@ -1410,12 +1420,10 @@ impl App {
                     },
                     12.0
                 ),
-                text(crate::l10n::text(label).to_owned())
-                    .size(14)
-                    .font(iced::Font {
-                        weight: iced::font::Weight::Medium,
-                        ..iced::Font::with_name("Source Han Sans CN")
-                    })
+                text(crate::l10n::text(label)).size(14).font(iced::Font {
+                    weight: iced::font::Weight::Medium,
+                    ..iced::Font::with_name("Source Han Sans CN")
+                })
             ]
             .spacing(8)
             .align_y(Alignment::Center),
@@ -1755,9 +1763,14 @@ impl App {
                 list = list
                     .push(
                         row![
-                            text(p["name"].as_str().unwrap_or("未命名"))
-                                .size(15)
-                                .width(Fill),
+                            iced::widget::text(
+                                p["name"]
+                                    .as_str()
+                                    .map(str::to_owned)
+                                    .unwrap_or_else(|| crate::l10n::text("未命名"))
+                            )
+                            .size(15)
+                            .width(Fill),
                             action(
                                 if current { "当前" } else { "切换" },
                                 Message::Profile(profiles::Action::Switch(id.clone())),
@@ -2199,7 +2212,7 @@ impl App {
         if let Some(release) = &self.update_release {
             content = content
                 .push(text(format!("Rockoon {}", release.version)).size(16))
-                .push(text(&release.notes).size(14));
+                .push(iced::widget::text(&release.notes).size(14));
             content = content.push(action(
                 if self.update_path.is_some() {
                     "安装更新并退出"
@@ -2358,7 +2371,11 @@ impl App {
             text(format!(
                 "{} 帧{}",
                 self.tas.frames.len(),
-                if self.tas.dirty { "  未导出" } else { "" }
+                if self.tas.dirty {
+                    format!("  {}", crate::l10n::text("未导出"))
+                } else {
+                    String::new()
+                }
             ))
             .size(14)
             .width(Fill),
@@ -2401,7 +2418,7 @@ impl App {
             action("停止游戏", Message::Stop, self.running.is_some()),
             action("解除嵌入", Message::TasDetach, self.tas_embedded),
             checkbox(self.tas_interactive)
-                .label("控制游戏")
+                .label(crate::l10n::text("控制游戏"))
                 .text_size(14)
                 .on_toggle_maybe(self.tas_embedded.then_some(Message::TasInteractive)),
         ]

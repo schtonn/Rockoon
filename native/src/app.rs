@@ -927,8 +927,8 @@ impl App {
                 let initial = self.root();
                 return Task::perform(
                     async move {
-                        let mut picker =
-                            rfd::AsyncFileDialog::new().set_title("选择 Ballance 游戏根目录");
+                        let mut picker = rfd::AsyncFileDialog::new()
+                            .set_title(crate::l10n::text("选择 Ballance 游戏根目录"));
                         if let Some(root) = initial {
                             picker = picker.set_directory(root);
                         }
@@ -1088,7 +1088,7 @@ impl App {
                 return Task::perform(
                     async move {
                         rfd::AsyncFileDialog::new()
-                            .set_title("导入资源或 BRP/ZIP 资源包")
+                            .set_title(crate::l10n::text("导入资源或 BRP/ZIP 资源包"))
                             .set_directory(initial)
                             .pick_files()
                             .await
@@ -1207,7 +1207,7 @@ impl App {
                         (
                             path,
                             rfd::AsyncFileDialog::new()
-                                .set_title("移动到资源文件夹")
+                                .set_title(crate::l10n::text("移动到资源文件夹"))
                                 .set_directory(directory)
                                 .pick_folder()
                                 .await
@@ -1784,7 +1784,7 @@ impl App {
                 return Task::perform(
                     async {
                         rfd::AsyncFileDialog::new()
-                            .set_title("选择空文件夹安装 Ballance")
+                            .set_title(crate::l10n::text("选择空文件夹安装 Ballance"))
                             .pick_folder()
                             .await
                             .map(|f| f.path().to_owned())

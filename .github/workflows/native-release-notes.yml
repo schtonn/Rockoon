@@ -28,6 +28,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import subprocess
+          import os
           import tomllib
           from pathlib import Path
 
@@ -36,5 +37,14 @@ jobs:
           notes = Path("release-notes/native") / (version + ".md")
           if not notes.is_file():
               raise SystemExit(f"Release notes missing: {notes}")
+          existing = subprocess.run(
+              ["gh", "api", f"repos/{os.environ['GH_REPO']}/releases/tags/{tag}"],
+              capture_output=True, text=True,
+          )
+          if existing.returncode:
+              if "HTTP 404" in existing.stderr:
+                  print(f"{tag} has not been published; notes will be used when releasing.")
+                  raise SystemExit(0)
+              raise SystemExit(existing.stderr)
           subprocess.run(["gh", "release", "edit", tag, "--notes-file", str(notes)], check=True)
           PY

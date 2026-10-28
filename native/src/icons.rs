@@ -1,9 +1,10 @@
 //! Small native vector icons, sharing the current theme and a consistent stroke.
+use crate::l10n::ui_text as text;
 use iced::{
     Alignment, Element,
     widget::{
         canvas::{self, Frame, Path, Stroke},
-        row, text,
+        row,
     },
 };
 #[derive(Clone, Copy, Debug)]

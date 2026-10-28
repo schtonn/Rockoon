@@ -1,11 +1,12 @@
 use super::*;
+use crate::l10n::{Label, ui_text as text};
 use crate::{
     hub,
     icons::{self, Icon},
 };
 use iced::{
     Alignment, Fill,
-    widget::{self, button, column, container, image, markdown, row, space, text},
+    widget::{self, button, column, container, image, markdown, row, space},
 };
 #[derive(Clone, Debug)]
 pub enum Action {
@@ -339,12 +340,15 @@ impl App {
         if let Some(package) = &self.hub.selected {
             return self.resource_detail(package);
         }
-        let search = widget::text_input("搜索名称、作者或简介", &self.hub.query.text)
-            .size(14)
-            .padding(6)
-            .style(style::input)
-            .on_input(|s| message(Action::Search(s)))
-            .on_submit(message(Action::Submit));
+        let search = widget::text_input(
+            &crate::l10n::text("搜索名称、作者或简介"),
+            &self.hub.query.text,
+        )
+        .size(14)
+        .padding(6)
+        .style(style::input)
+        .on_input(|s| message(Action::Search(s)))
+        .on_submit(message(Action::Submit));
         let toolbar = row![
             icons::view(Icon::Search, 16.0),
             search,
@@ -446,14 +450,14 @@ impl App {
     }
     fn resource_card<'a>(&'a self, package: &'a hub::Package) -> Element<'a, Message> {
         let cover = self.resource_cover(package.cover(), false, 128.0);
-        let title = button(text(short(package.title(), 28)).size(16).height(42))
+        let title = button(widget::text(short(package.title(), 28)).size(16).height(42))
             .padding(0)
             .width(Fill)
             .style(style::quiet)
             .on_press(message(Action::Open(package.id)));
         let authors = package.authors();
         let metadata = row![
-            text(short(&authors, 25)).size(13).width(Fill),
+            widget::text(short(&authors, 25)).size(13).width(Fill),
             text(hub::size(package.file_size)).size(13)
         ]
         .spacing(8);
@@ -547,10 +551,10 @@ impl App {
             .into()
     }
     fn resource_hero<'a>(&'a self, package: &'a hub::Package, wide: bool) -> Element<'a, Message> {
-        let mut info = column![text(package.title()).size(24)].spacing(14);
+        let mut info = column![widget::text(package.title()).size(24)].spacing(14);
         let authors = package.authors();
         if !authors.is_empty() {
-            info = info.push(text(authors).size(14));
+            info = info.push(widget::text(authors).size(14));
         }
         info = info.push(
             row![
@@ -762,13 +766,8 @@ fn picker<'a, T: Clone + PartialEq + std::fmt::Display + 'a>(
     options: Vec<T>,
     selected: T,
     on_select: impl Fn(T) -> Message + 'a,
-) -> widget::PickList<'a, T, Vec<T>, T, Message> {
-    widget::pick_list(options, Some(selected), on_select)
-        .text_size(14)
-        .padding(6)
-        .width(184)
-        .style(style::select)
-        .menu_style(style::select_menu)
+) -> widget::PickList<'a, Label<T>, Vec<Label<T>>, Label<T>, Message> {
+    super::views::pick_list(options, Some(selected), on_select)
 }
 fn icon_button<'a>(
     icon: Icon,

@@ -6,6 +6,10 @@ use std::{
     },
 };
 static ENGLISH: AtomicBool = AtomicBool::new(false);
+static NATIVE_ENGLISH: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("../resources/i18n/en.json"))
+        .expect("valid native English translations")
+});
 static WORDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     fn visit(zh: &serde_json::Value, en: &serde_json::Value, map: &mut HashMap<String, String>) {
         if let (Some(zh), Some(en)) = (zh.as_str(), en.as_str()) {
@@ -228,6 +232,7 @@ static WORDS: LazyLock<HashMap<String, String>> = LazyLock::new(|| {
     ] {
         map.insert(zh.into(), en.into());
     }
+    map.extend(NATIVE_ENGLISH.clone());
     map
 });
 pub fn set(language: &str) {
@@ -235,8 +240,153 @@ pub fn set(language: &str) {
 }
 pub fn text(value: &str) -> String {
     if ENGLISH.load(Ordering::Relaxed) {
-        WORDS.get(value).cloned().unwrap_or_else(|| value.into())
+        english(value)
     } else {
         value.into()
+    }
+}
+
+fn english(value: &str) -> String {
+    if let Some(translated) = WORDS.get(value) {
+        return translated.clone();
+    }
+    if value
+        .chars()
+        .any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c))
+    {
+        for template in TEMPLATES.iter() {
+            if let Some(translated) = template.translate(value) {
+                return translated;
+            }
+        }
+    }
+    value.into()
+}
+
+pub fn ui_text<'a>(value: impl AsRef<str>) -> iced::widget::Text<'a> {
+    iced::widget::text(text(value.as_ref()))
+}
+
+/// Translate a choice's caption while preserving the original selected value.
+#[derive(Clone, PartialEq)]
+pub struct Label<T>(pub T);
+impl<T: ToString> std::fmt::Display for Label<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&text(&self.0.to_string()))
+    }
+}
+
+struct Template {
+    parts: Vec<String>,
+    names: Vec<String>,
+    translated: String,
+    literal_len: usize,
+}
+impl Template {
+    fn new(source: &str, translated: &str) -> Option<Self> {
+        let mut remaining = source;
+        let mut parts = Vec::new();
+        let mut names = Vec::new();
+        while let Some(start) = remaining.find('{') {
+            let end = remaining[start..].find('}')? + start;
+            let name = &remaining[start + 1..end];
+            if name.is_empty() || name.contains(['{', ':']) {
+                return None;
+            }
+            parts.push(remaining[..start].into());
+            names.push(name.into());
+            remaining = &remaining[end + 1..];
+        }
+        parts.push(remaining.into());
+        if names.is_empty() || parts[1..parts.len() - 1].iter().any(String::is_empty) {
+            return None;
+        }
+        let literal_len = parts.iter().map(String::len).sum();
+        Some(Self {
+            parts,
+            names,
+            translated: translated.into(),
+            literal_len,
+        })
+    }
+    fn translate(&self, value: &str) -> Option<String> {
+        let mut remaining = value.strip_prefix(&self.parts[0])?;
+        let mut values = HashMap::new();
+        for (index, name) in self.names.iter().enumerate() {
+            let separator = &self.parts[index + 1];
+            let captured;
+            if index + 1 == self.names.len() {
+                captured = remaining.strip_suffix(separator)?;
+                remaining = "";
+            } else {
+                let boundary = remaining.find(separator)?;
+                captured = &remaining[..boundary];
+                remaining = &remaining[boundary + separator.len()..];
+            }
+            values.insert(name.as_str(), captured);
+        }
+        if !remaining.is_empty() {
+            return None;
+        }
+        let mut translated = String::new();
+        let mut remaining = self.translated.as_str();
+        while let Some(start) = remaining.find('{') {
+            let end = remaining[start..].find('}')? + start;
+            translated.push_str(&remaining[..start]);
+            translated.push_str(values.get(&remaining[start + 1..end])?);
+            remaining = &remaining[end + 1..];
+        }
+        translated.push_str(remaining);
+        Some(translated)
+    }
+}
+static TEMPLATES: LazyLock<Vec<Template>> = LazyLock::new(|| {
+    let mut templates: Vec<_> = NATIVE_ENGLISH
+        .iter()
+        .filter_map(|(source, translated)| Template::new(source, translated))
+        .collect();
+    templates.sort_by_key(|template| std::cmp::Reverse(template.literal_len));
+    templates
+});
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_navigation_and_configuration_are_translated() {
+        for (source, expected) in [
+            ("选项", "Preferences"),
+            ("配置集", "Profile"),
+            ("制图", "Mapping"),
+            ("跳过开场", "Skip intro"),
+            ("第 13 关", "Level 13"),
+            ("24 项资源", "24 resources"),
+            ("2 小时 15 分钟", "2 h 15 min"),
+        ] {
+            assert_eq!(english(source), expected);
+        }
+    }
+
+    #[test]
+    fn dynamic_messages_preserve_resource_names_and_paths() {
+        assert_eq!(
+            english("请先卸载旧版 BBP：D:\\制图\\{project}\\BBP"),
+            "Uninstall the old BBP first: D:\\制图\\{project}\\BBP"
+        );
+        assert_eq!(english("我的配置 {custom}"), "我的配置 {custom}");
+        assert_eq!(english("Player.ini"), "Player.ini");
+    }
+
+    #[test]
+    fn templates_require_the_entire_message_and_keep_captures_literal() {
+        let template =
+            Template::new("已安装 {name}（{version}）", "Installed {name} ({version})").unwrap();
+        assert_eq!(
+            template.translate("已安装 我的{version}（1.2）").as_deref(),
+            Some("Installed 我的{version} (1.2)")
+        );
+        assert!(template.translate("已安装 BBP（1.2）额外文字").is_none());
+        assert!(Template::new("{first}{second}", "{first} {second}").is_none());
     }
 }
