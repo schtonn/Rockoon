@@ -1,16 +1,16 @@
-# Homepage falling balls
+# Homepage physics scene
 
-The native homepage reads `3D Entities/Balls.nmo` and `Textures/Ball_{Wood,Stone,Paper}.bmp` from the selected installation. It uses the original mesh positions, normals and UVs, including the paper ball silhouette. No game artwork, game DLL, WebView, GPU backend or third-party runtime is added to the executable. If any required asset is missing, damaged or unsupported, the normal sky and launch controls remain usable without the decoration.
+The native home reads the selected game's original ball meshes and textures, plus the original checkpoint platform `A02_Floor_01_Mesh` from `3D Entities/Level/Level_01.nmo`. Its materials are `Floor_Side.bmp`, `Floor_Top_Checkpoint.bmp` and `Floor_Top_Profil.bmp`. The platform rotates 90 degrees and scales uniformly by 1.2; rendering and collision use the same transformed vertices. No game artwork, DLL, WebView, GPU backend or extra runtime dependency is bundled. Missing platform assets preserve the falling-ball scene; missing ball assets preserve the normal static home.
 
-The bounded NMO reader supports the retail Virtools 2.1 container and version-7 state chunks needed for those three meshes only. File, inflation, object, vertex and index limits apply before allocating or using data. Format references are [LibCmo CKFileReader](https://github.com/yyc12345/libcmo21/blob/master/LibCmo/LibCmo/CK2/CKFileReader.cpp), [CKStateChunkOthers](https://github.com/yyc12345/libcmo21/blob/master/LibCmo/LibCmo/CK2/CKStateChunkOthers.cpp) and [CKMesh](https://github.com/yyc12345/libcmo21/blob/master/LibCmo/LibCmo/CK2/ObjImpls/CKMesh.cpp). The reference license is in [LibCmo-LICENSE.txt](LibCmo-LICENSE.txt). The temporary BMap tool used to independently inspect the original meshes is not a build or runtime dependency.
+The bounded Virtools reader supports the retail version-8 containers and version-7 state chunks needed for these models. It reads positions, normals, UVs, triangles and material slots. File, inflation, object, vertex and index limits apply before use. References: [LibCmo CKFileReader](https://github.com/yyc12345/libcmo21/blob/master/LibCmo/LibCmo/CK2/CKFileReader.cpp), [CKStateChunkOthers](https://github.com/yyc12345/libcmo21/blob/master/LibCmo/LibCmo/CK2/CKStateChunkOthers.cpp), [CKMesh](https://github.com/yyc12345/libcmo21/blob/master/LibCmo/LibCmo/CK2/ObjImpls/CKMesh.cpp); license in [LibCmo-LICENSE.txt](LibCmo-LICENSE.txt). The temporary BMap inspection tool is not a build/runtime dependency.
 
-## Physics reference and scope
+## Physics
 
-Parameters were read from the user's existing reverse-engineering outputs, without editing that project:
+Reference data came from the user's existing `Desktop/ball/rl/reports/decoupling` outputs, without modifying or starting that runtime:
 
-- `Desktop/ball/rl/reports/decoupling/transformation-initial-geometry.json`, `ball_profiles` (`Physicalize_GameBall`).
-- `Desktop/ball/rl/reports/decoupling/level1.ivpbin`, the world header (gravity and PSI interval).
-- `Desktop/ball/rl/docs/physics.md`, the native engine and replay limitations.
+- `transformation-initial-geometry.json`: `Physicalize_GameBall` profiles.
+- `level1.ivpbin`: gravity, PSI interval and the `A02_Floor_01` collision material.
+- `docs/physics.md`: original engine/replay limitations.
 
 | Ball | Mass | Friction | Elasticity | Linear damping | Angular damping |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -18,17 +18,24 @@ Parameters were read from the user's existing reverse-engineering outputs, witho
 | Stone | 10 | 0.5 | 0.1 | 0.3 | 0.1 |
 | Paper | 0.2 | 0.5 | 0.4 | 1.5 | 0.1 |
 
-Gravity is `(0, -20, 0)`, sphere collision radius is 2, and the simulation advances at 1/66 s. The renderer targets 60 Hz and uses small 96-pixel CPU-rasterized sprites with interpolated source normals, bilinear repeat-addressed textures and a neutral directional light. A short, bounded pose prediction smooths frames between physics steps. The sky is pre-scaled into cached tiles so a moving ball only repaints nearby pixels. Sizes and emission timing are decoration choices.
+Gravity is `(0,-20,0)`, collision radius 2, fixed step 1/66 s. The platform's source friction is .7 and elasticity .3. This remains a decorative approximation, **not a port or trajectory-equivalent reproduction of IVP**: analytic linear drag, solid-sphere inertia, normal impulses, finite triangle closest-point contacts and Coulomb friction. Contact elasticity/friction use geometric means. Low-speed floor contacts suppress restitution to remain supported. Sphere friction operates in the full contact tangent plane and generates spin around all three axes.
 
-This is a sphere-only decorative approximation, **not a port of the original IVP solver**. It uses analytic linear drag under constant gravity, solid-sphere inertia, sequential normal impulses, positional correction and Coulomb friction that generates angular motion. Contact elasticity and friction use geometric means. It omits the retail contact scheduler, sleeping, engine force controllers and full level geometry. Ball centers share one plane while each mesh rotates in 3D. No original-trajectory equivalence is claimed.
+The world is now three-dimensional. Random initial velocities span +/-8 in X and +/-7 in Z, with downward velocity .5-3.5; initial angular velocities span +/-3 rad/s on each axis. Spawn positions compensate loosely for drag, so stronger launch momentum still brings balls toward the finite platform. Balls bounce, roll, push each other and can fall off its actual curved edges; no invisible floor or walls are added. At most twelve bodies remain live, with off-screen bodies retired naturally. A 100-second original-platform check confirms continued emission instead of a stationary full-capacity scene.
 
-Balls fall through the bottom edge, rather than bouncing on an invisible floor or accumulating. There are at most eight live bodies. The original directory header stays clear and launch controls remain above the decoration. Animation stops when leaving Home, while unfocused/hidden, or while launching/running the owned game. Long gaps are capped, so resuming cannot trigger a burst of overdue simulation steps. Widget redraws do not publish per-frame application messages.
+A perspective camera projects the original meshes with interpolated normals, bilinear repeat-addressed textures and perspective-correct UVs. Static platform depth masks balls behind it, and contact shadows render on its top plane where supported. Bodies sort by camera depth. A bounded pose prediction smooths display frames between physics steps. Sky/platform tiles cache static pixels to avoid full-background software repainting.
 
-## Validation
+Spawn height is solved in camera space above the actual window edge. Clipping uses the whole home viewport; the directory row does not cut a horizontal line through entering balls. The directory menu and START remain above the scene. Resizing changes the camera without stretching the physical platform or body positions.
 
-Workspace tests cover momentum/energy in unequal-mass collisions, drag ordering and terminal speed, spin from glancing contacts, display-rate independence, long-run body bounds, and malformed container limits. Clippy and formatting checks apply to all targets.
+## Checkpoint flames
 
-An opt-in local asset check uses `ROCKOON_BALL_ASSET_TEST_ROOT` and validates these source counts: wood 316 vertices / 280 triangles; stone 390 / 720; paper 315 / 320. It also renders each model at multiple orientations. `ROCKOON_BALL_RENDER_DIR` optionally exports a raw RGBA frame for visual review. Normal tests do not require game files.
+`Textures/Particle_Flames.bmp` supplies the original particle shapes. The reverse-engineering export `gameplay-scripts.json`, `PC_TwoFlames_SmallFlameA/B script`, supplies the effect reference: 20 ms emission delay, 1000 +/-250 ms life, .008 +/-.003 units/ms upward speed, size 3 -> .1, initial RGBA (.9215687,.1647059,.2745098,1) fading to zero, SRCALPHA + ONE blending. Native emitters sit at the checkpoint's two fire mouths after the same model transform. Fifty particles per mouth keep the effect bounded. Cached fire sprites refresh at 30 Hz while ball rendering remains at 60 Hz. The mouths use different phase offsets.
 
-UI review and performance are checked using an isolated game fixture and a QA-owned launcher process. No real game is started, no registry protocol association is changed, and the desktop reverse-engineering runtime remains untouched. This iteration is a local test build only.
-Local release review (1040 x 700, software renderer): approximately 16% of one CPU core during animation, 61 MiB RSS. Configuration idle and minimized-home samples were 0% of one core; sampled memory did not grow. These are local measurements, not a cross-machine performance guarantee. The release window was also reviewed at 840 x 580, after restoring its size, with START hover, the folder popup, and resume after minimizing.
+The lightweight emitter preserves the source texture, color, shrinking, rising and fading behavior, with a deterministic pseudo-random distribution. It approximates the original particle engine. Since iced's image widget uses alpha-over, a local sprite encodes the equivalent additive result against the cached static sky/platform. Fire renders behind the balls; it does not interact physically. Missing fire texture preserves the platform without a placeholder drawing.
+
+## Lifecycle and validation
+
+Only home widget redraws drive animation, with no per-frame application messages. Leaving Home, losing focus, hiding/minimizing or launching/running the owned game pauses balls and flames. Long gaps do not trigger a backlog of simulation steps.
+
+Tests cover unequal-mass collision momentum/energy, drag ordering, frame-rate-independent stepping, glancing spin, finite platform support/bounce/edge escape, depth-axis collisions, camera inversion and births above the top edge. Optional source-asset tests use `ROCKOON_BALL_ASSET_TEST_ROOT`; source mesh counts are wood 316/280, stone 390/720, paper 315/320 vertices/triangles. An original-platform 100-second run checks finite states, actual support, depth movement, bounded bodies and more than 45 births. Normal tests do not require game files.
+
+UI checks use an isolated fixture and a QA-owned launcher. No real game starts, registry protocol association changes or desktop reverse-engineering files are modified. Builds remain local for user testing; no upload/release is performed.

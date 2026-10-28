@@ -9,6 +9,7 @@ pub struct Mesh {
     pub normals: Vec<V>,
     pub uv: Vec<[f32; 2]>,
     pub faces: Vec<[usize; 3]>,
+    pub materials: Vec<usize>,
 }
 struct Reader<'a> {
     bytes: &'a [u8],
@@ -105,7 +106,7 @@ impl Mesh {
                 .map(|_| Some([r.f32()?, r.f32()?]))
                 .collect::<Option<Vec<_>>>()?
         };
-        if positions.iter().any(|v| v.length() > 3.0) {
+        if positions.iter().any(|v| v.length() > 1024.0) {
             return None;
         }
         let mut r = Reader::new(section(chunk, 0x10000)?);
@@ -113,6 +114,7 @@ impl Mesh {
         if count_faces > 8192 {
             return None;
         }
+        let mut materials = Vec::new();
         let faces = (0..count_faces)
             .map(|_| {
                 let b = r.take(8)?;
@@ -123,6 +125,7 @@ impl Mesh {
                         return None;
                     }
                 }
+                materials.push(u16::from_le_bytes([b[6], b[7]]) as usize);
                 Some(face)
             })
             .collect::<Option<Vec<_>>>()?;
@@ -131,17 +134,42 @@ impl Mesh {
             normals,
             uv,
             faces,
+            materials,
         })
     }
 }
 pub fn load(root: &Path) -> Option<[Mesh; 3]> {
-    let path = root.join("3D Entities/Balls.nmo");
-    if std::fs::metadata(&path).ok()?.len() > 4 * 1024 * 1024 {
+    let bytes = read_file(&root.join("3D Entities/Balls.nmo"))?;
+    parse(&bytes)
+}
+fn read_file(path: &Path) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > 4 * 1024 * 1024 {
         return None;
     }
-    parse(&std::fs::read(path).ok()?)
+    let mut bytes = Vec::new();
+    file.take(4 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .ok()?;
+    (bytes.len() <= 4 * 1024 * 1024).then_some(bytes)
+}
+pub fn platform(root: &Path) -> Option<Mesh> {
+    let bytes = read_file(&root.join("3D Entities/Level/Level_01.nmo"))?;
+    named(&bytes, &[b"A02_Floor_01_Mesh"])?.pop()
 }
 fn parse(bytes: &[u8]) -> Option<[Mesh; 3]> {
+    named(
+        bytes,
+        &[
+            b"Ball_Wood_Mesh",
+            b"Ball_Stone_HighRes_Mesh",
+            b"Ball_Paper_Mesh",
+        ],
+    )?
+    .try_into()
+    .ok()
+}
+fn named(bytes: &[u8], wanted: &[&[u8]]) -> Option<Vec<Mesh>> {
     let mut r = Reader::new(bytes);
     if r.take(8)? != b"Nemo Fi\0" {
         return None;
@@ -168,21 +196,17 @@ fn parse(bytes: &[u8]) -> Option<[Mesh; 3]> {
         let n = r.u32()? as usize;
         r.take(n)?;
     }
-    let mut found: [Option<Mesh>; 3] = [None, None, None];
+    let mut found: Vec<Option<Mesh>> = (0..wanted.len()).map(|_| None).collect();
     for name in names {
         let n = r.u32()? as usize;
         let chunk = r.take(n)?;
         let name = name.strip_suffix(&[0]).unwrap_or(name);
-        let index = match name {
-            b"Ball_Wood_Mesh" => 0,
-            b"Ball_Stone_HighRes_Mesh" => 1,
-            b"Ball_Paper_Mesh" => 2,
-            _ => continue,
+        let Some(index) = wanted.iter().position(|&n| n == name) else {
+            continue;
         };
         found[index] = Some(Mesh::read(chunk)?);
     }
-    let [a, b, c] = found;
-    Some([a?, b?, c?])
+    found.into_iter().collect()
 }
 #[cfg(test)]
 mod tests {
