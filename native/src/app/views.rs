@@ -131,12 +131,24 @@ impl App {
             nav = nav.push(self.nav(page));
         }
         nav = nav.push(space::vertical()).push(self.nav(Page::Settings));
-        let sidebar = container(nav.height(Fill))
-            .padding([24, 18])
-            .width(164)
-            .height(Fill)
-            .clip(true)
-            .style(style::sidebar);
+        let sidebar = container(
+            row![
+                container(nav.height(Fill))
+                    .padding([24, 18])
+                    .width(Fill)
+                    .height(Fill),
+                rule::vertical(1).style(|theme| rule::Style {
+                    color: style::colors(theme).line,
+                    ..rule::default(theme)
+                }),
+            ]
+            .width(Fill)
+            .height(Fill),
+        )
+        .width(164)
+        .height(Fill)
+        .clip(true)
+        .style(style::navigation_surface);
         let header = self.header();
         let content: Element<'_, Message> = if self.page == Page::Home {
             stack![self.home(), container(header).padding(24).width(Fill)]

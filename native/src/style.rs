@@ -26,10 +26,10 @@ fn palette(mode: ColorMode) -> Colors {
             background: Color::from_rgb8(246, 247, 248),
             surface: Color::WHITE,
             text: Color::from_rgb8(34, 38, 43),
-            muted: Color::from_rgb8(114, 121, 130),
-            line: Color::from_rgb8(217, 222, 228),
-            hover: Color::from_rgb8(235, 238, 242),
-            selected: Color::from_rgb8(223, 228, 234),
+            muted: Color::from_rgb8(103, 111, 121),
+            line: Color::from_rgb8(195, 203, 213),
+            hover: Color::from_rgb8(227, 233, 240),
+            selected: Color::from_rgb8(201, 211, 223),
             focus: Color::from_rgb8(105, 117, 132),
             solid: Color::from_rgb8(67, 77, 90),
             on_solid: Color::WHITE,
@@ -75,6 +75,15 @@ fn outline(color: Color) -> Border {
         color,
         width: 1.0,
         radius: 4.0.into(),
+    }
+}
+/// The navigation rail and its inner divider share the same outer bounds.
+pub fn navigation_surface(theme: &Theme) -> container::Style {
+    let c = colors(theme);
+    container::Style {
+        background: Some(c.surface.into()),
+        text_color: Some(c.text),
+        ..container::Style::default()
     }
 }
 pub fn sidebar(theme: &Theme) -> container::Style {
@@ -163,25 +172,50 @@ pub fn sky_button(_: &Theme, status: button::Status) -> button::Style {
 pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let mut style = quiet(theme, status);
-        if selected && status == button::Status::Active {
-            style.background = Some(colors(theme).selected.into());
+        if selected && status != button::Status::Disabled {
+            let c = colors(theme);
+            style.background = Some(c.selected.into());
+            if status == button::Status::Hovered {
+                style.border = outline(c.focus.scale_alpha(0.55));
+            }
         }
         style
     }
 }
 pub fn tab(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
-        let mut style = nav(selected)(theme, status);
-        if let Some(iced::Background::Color(color)) = style.background {
-            style.background = Some(color.scale_alpha(0.76).into());
+        let c = colors(theme);
+        if theme.palette().background.r > 0.5 {
+            let mut style = quiet(theme, status);
+            if selected && status != button::Status::Disabled {
+                let fill = match status {
+                    button::Status::Hovered => c.text.scale_alpha(0.90),
+                    button::Status::Pressed => c.text,
+                    _ => c.solid.scale_alpha(0.95),
+                };
+                style.background = Some(fill.into());
+                style.text_color = c.on_solid;
+                style.border = outline(c.solid);
+            }
+            style
+        } else {
+            let mut style = nav(selected)(theme, status);
+            if let Some(iced::Background::Color(color)) = style.background {
+                style.background = Some(color.scale_alpha(0.76).into());
+            }
+            style
         }
-        style
     }
 }
 pub fn tabs(theme: &Theme) -> container::Style {
+    let c = colors(theme);
     let mut style = menu(theme);
     style.border.radius = 6.0.into();
-    style.background = Some(colors(theme).surface.scale_alpha(0.32).into());
+    style.background = Some(if theme.palette().background.r > 0.5 {
+        c.hover.scale_alpha(0.55).into()
+    } else {
+        c.surface.scale_alpha(0.32).into()
+    });
     style
 }
 pub fn menu(theme: &Theme) -> container::Style {
