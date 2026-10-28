@@ -19,6 +19,29 @@ mod sky_preview;
 mod views;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResourceFilter {
+    Category(crate::hub::Category),
+    Mapping,
+}
+impl ResourceFilter {
+    fn all() -> Vec<Self> {
+        crate::hub::Category::ALL
+            .into_iter()
+            .map(Self::Category)
+            .chain(std::iter::once(Self::Mapping))
+            .collect()
+    }
+}
+impl std::fmt::Display for ResourceFilter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Category(category) => category.fmt(f),
+            Self::Mapping => f.write_str(&crate::l10n::text("制图")),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     Home,
     Hub,
@@ -134,7 +157,7 @@ pub enum Message {
     ExpandSky(PathBuf),
     Browse(PathBuf),
     Listed(u64, Result<Vec<Entry>, String>),
-    ResourceCategory(crate::hub::Category),
+    ResourceCategory(ResourceFilter),
     ResourceSource(bool),
     Import,
     FilesPicked(Vec<PathBuf>),
@@ -972,6 +995,9 @@ impl App {
                     return self.update(Message::OpenTas);
                 }
 
+                if page == Page::Mapping {
+                    self.mapping.online = self.page == Page::Hub;
+                }
                 self.page = page;
                 if let Some(kind) = self.kind() {
                     self.local_category = crate::hub::Category::from_kind(kind);
@@ -1028,6 +1054,9 @@ impl App {
                 }
             }
             Message::ResourceSource(online) => {
+                if self.page == Page::Mapping {
+                    return Task::none();
+                }
                 if online {
                     let category = self.local_category;
                     if self.page != Page::Hub && category != self.hub.query.category {
@@ -1044,8 +1073,12 @@ impl App {
                 }
                 return self.select_local_category(self.hub.query.category);
             }
-            Message::ResourceCategory(category) => {
-                if self.page == Page::Hub {
+            Message::ResourceCategory(ResourceFilter::Mapping) => {
+                return self.update(Message::Page(Page::Mapping));
+            }
+            Message::ResourceCategory(ResourceFilter::Category(category)) => {
+                if self.page == Page::Hub || self.page == Page::Mapping && self.mapping.online {
+                    self.page = Page::Hub;
                     return self.update_catalog(catalog::Action::Category(category));
                 }
                 return self.select_local_category(category);
@@ -2609,6 +2642,38 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn resource_mapping_disables_source_switching_and_returns_to_online_category() {
+        let (mut app, _) = App::new();
+        app.page = Page::Hub;
+        app.hub.query.category = crate::hub::Category::Sky;
+        let _ = app.update(Message::ResourceCategory(ResourceFilter::Mapping));
+        assert_eq!(app.page, Page::Mapping);
+        assert!(app.mapping.online);
+        for online in [false, true] {
+            let _ = app.update(Message::ResourceSource(online));
+            assert_eq!(app.page, Page::Mapping);
+        }
+        let _ = app.update(Message::ResourceCategory(ResourceFilter::Category(
+            crate::hub::Category::Mod,
+        )));
+        assert_eq!(app.page, Page::Hub);
+        assert_eq!(app.hub.query.category, crate::hub::Category::Mod);
+    }
+    #[test]
+    fn resource_mapping_returns_to_the_selected_local_resource_type() {
+        let (mut app, _) = App::new();
+        app.page = Page::Maps;
+        let _ = app.update(Message::ResourceCategory(ResourceFilter::Mapping));
+        assert_eq!(app.page, Page::Mapping);
+        assert!(!app.mapping.online);
+        let _ = app.update(Message::ResourceCategory(ResourceFilter::Category(
+            crate::hub::Category::Sky,
+        )));
+        assert_eq!(app.page, Page::Assets);
+        assert_eq!(app.local_category, crate::hub::Category::Sky);
+        assert_eq!(app.asset_kind, Kind::Skies);
+    }
     fn editable_config() -> (tempfile::TempDir, App) {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("Test.cfg");

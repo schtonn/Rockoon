@@ -469,41 +469,44 @@ impl App {
     }
     fn section_tabs(&self) -> Element<'_, Message> {
         if self.page.section() == Page::Maps {
-            let online = self.page == Page::Hub;
             let mapping = self.page == Page::Mapping;
+            let online = if mapping {
+                self.mapping.online
+            } else {
+                self.page == Page::Hub
+            };
             let source = row![
                 button(container(text("在线").size(14)).center_y(Fill))
                     .padding([0, 12])
                     .height(32)
                     .style(style::tab(online))
-                    .on_press(Message::ResourceSource(true)),
+                    .on_press_maybe((!mapping).then_some(Message::ResourceSource(true))),
                 button(container(text("本地").size(14)).center_y(Fill))
                     .padding([0, 12])
                     .height(32)
-                    .style(style::tab(!online && !mapping))
-                    .on_press(Message::ResourceSource(false)),
-                button(container(text("制图").size(14)).center_y(Fill))
-                    .padding([0, 12])
-                    .height(32)
-                    .style(style::tab(mapping))
-                    .on_press(Message::Page(Page::Mapping)),
+                    .style(style::tab(!online))
+                    .on_press_maybe((!mapping).then_some(Message::ResourceSource(false))),
             ]
             .spacing(2)
             .align_y(Alignment::Center);
-            let mut tabs = row![container(source).padding(2).style(style::tabs)]
-                .spacing(16)
-                .align_y(Alignment::Center);
-            if !mapping {
-                tabs = tabs.push(pick_list(
-                    crate::hub::Category::ALL.to_vec(),
-                    Some(if online {
-                        self.hub.query.category
+            let tabs = row![
+                container(source).padding(2).style(style::tabs),
+                pick_list(
+                    ResourceFilter::all(),
+                    Some(if mapping {
+                        ResourceFilter::Mapping
                     } else {
-                        self.local_category
+                        ResourceFilter::Category(if online {
+                            self.hub.query.category
+                        } else {
+                            self.local_category
+                        })
                     }),
                     Message::ResourceCategory,
-                ));
-            }
+                ),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center);
             return tabs
                 .push(space::horizontal())
                 .push(action(

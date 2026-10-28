@@ -28,6 +28,7 @@ pub struct Scan {
 }
 #[derive(Default)]
 pub(super) struct State {
+    pub(super) online: bool,
     candidates: Vec<String>,
     selected: Option<String>,
     probe: Option<blender::BlenderProbe>,
@@ -225,6 +226,9 @@ impl App {
                     .as_ref()
                     .is_some_and(|p| p.bbp.iter().any(|b| b.module == blender::MODULE));
                 if !ready {
+                    if self.page != Page::Mapping {
+                        self.mapping.online = self.page == Page::Hub;
+                    }
                     self.page = Page::Mapping;
                     self.notify("请先在制图页配置 Blender 和 BBP");
                     return Task::none();

@@ -185,6 +185,13 @@ pub fn nav(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
 pub fn tab(selected: bool) -> impl Fn(&Theme, button::Status) -> button::Style {
     move |theme, status| {
         let c = colors(theme);
+        if selected && status == button::Status::Disabled {
+            return button::Style {
+                background: Some(c.selected.scale_alpha(0.65).into()),
+                border: outline(c.line),
+                ..quiet(theme, status)
+            };
+        }
         if theme.palette().background.r > 0.5 {
             let mut style = quiet(theme, status);
             if selected && status != button::Status::Disabled {
